@@ -6,9 +6,10 @@ Learned from CURSOR_HANDOFF.md, m4999 smoke evidence, and Gary's characterizatio
 
 - NERSC is inference-only. Harbor / Pi / task / verifier run on the Mac via Docker.
 - Use only m4999 GPU credits (`--account=m4999 --constraint=gpu`). Never fall back to ntrain5.
-- Proven allocation shape: 1 GPU, 32 CPUs, 56G, `shared_interactive`, ≤20 minutes. Request once; release promptly.
+- Proven allocation shape: 1 GPU, 32 CPUs, 56G, `shared_interactive`. Smoke ≤20 minutes; characterization campaigns may use up to QOS MaxWall (4h). Request once; release promptly.
 - Preserve FlashInfer workaround until retested: node-local JIT caches and `VLLM_USE_FLASHINFER_SAMPLER=0`.
 - Valid vLLM flag: `--default-chat-template-kwargs` (not `--chat-template-kwargs`).
+- For Qwen3.5 multimodal checkpoints on text-only DeepSWE: always pass `--language-model-only` (and `--reasoning-parser qwen3` when using thinking-off). Without it, encoder init can hang after weight load.
 
 ## Evidence honesty
 
@@ -26,6 +27,16 @@ Learned from CURSOR_HANDOFF.md, m4999 smoke evidence, and Gary's characterizatio
 - Use an explicit campaign manifest for run selection. Do not glob all of `jobs/` as a clean dataset.
 - Pi `tool_execution_start` events are not actual execute overlap; instrument execute entry/exit later.
 - Cache integration is later work; uncached pilots use `hit=false` / `cache_mode=none`.
+- Stock-image A arms (9B/4B × t8/t50 on unmodified DeepSWE; ~0–1.7% parallel) are **infra / early evidence only**. Handout DeepSWE requires **setup-as-agent-actions** variants (`scripts/prepare_task.py --setup-as-agent-actions` → `variants/deep-swe-setup/tasks/`). Re-run characterization on those variants before claiming the handout A cell; then B on the **same** variants. Do not block on 113-task sweeps or MLX parity.
+- Never edit official `vendor/deep-swe/tasks/` in place for setup variants. Agent env: thin base image + setup preamble; verifier/tests stay authoritative (often still FROM the prebuilt swe-bench image). Agent network may be `public`/`allowlist` for clone/install; verifier stays `no-network`.
+- Crystal-clear TVCache opportunity surfaces (Gary 2026-10-30):
+  1. **Key = trajectory prefix in the Tool Call Graph**, not “same command string.” Same bash text after a different mutating prefix is a **different** node (correct miss).
+  2. **Paper training win = cross-rollout reuse:** R parallel rollouts of the **same task** share one TCG. Rollout 2 hits paths rollout 1 already executed. Calls need not be in the same turn. Multi-tool-in-one-turn is **not** required for this win.
+  3. **Single cold rollout / single attempt with empty cache:** first walk of each path is a **miss**. Later turns in that same rollout only hit if they repeat the **same stateful prefix + call** (uncommon for mutating chains; possible for repeated reads at unchanged state). Expecting high hit rate from one cold DeepSWE attempt alone is the wrong mental model.
+  4. **Within-turn N>1 tools:** calls are **siblings under the same pre-turn stateful prefix**, not a forced chain. C needs batch lookup/partial hit/call-IDs (+ in-flight lease if two attempts miss the same path together). Not fuzzy matching. Storage options: per-call under shared prefix, whole-turn entry, or hybrid (handout compare).
+  5. **Course A metric** (parallel-turn fraction) measures multi-call-turn prevalence only. It is not the paper’s cross-rollout hit-rate story.
+  6. **Course B/C hit rates in eval** require shared/warm TCG across pass@k (or concurrent) attempts. Inference is the assigned testbed (handout: no training); the same C mechanics apply harder in GRPO’s R parallel rollouts.
+- Low observed parallel-turn % is valid A evidence. Report honestly; do not prompt-hack tasks to manufacture parallelism for A tables. Teammate MLX ~48% is a different cell, not a reason to reopen A as critical path.
 
 ## Dual-model comparison (team split)
 
@@ -34,6 +45,25 @@ Learned from CURSOR_HANDOFF.md, m4999 smoke evidence, and Gary's characterizatio
 - Hold constant: Harbor/Pi harness version, task ids/variants, grading, cache mode (`none` for characterization), and analysis denominators.
 - Vary: model only. Report parallel-turn fraction and calls-per-turn CDF **per model** as well as pooled, and state whether tool-call patterns differ a lot.
 - Agree the shared task list and attempt budget before scaling either side. Do not silently diverge on prompts, max_turns, thinking mode, or task variants.
+- Teammate PDF rankings from TVCache/MLX/`1 trial × 8 steps` are **not** Harbor/Pi cells. Ablate with Harbor/Pi arms in `configs/ablation-model-steps-v1.md` (`9b-t8`, `4b-t8`, `4b-t50`). Confirm DeepSWE `git rev-parse HEAD` with teammate; task-id set is 113 and overlaps, but commit/image pins may still differ.
+- Live runs need a fresh NERSC `sshproxy` cert (≈24h). Agent sandboxes cannot refresh MFA or access Metal for local MLX; run those in the user’s Terminal.
+- Ablation Harbor loops must run under `bash` (scripts with `#!/usr/bin/env bash`). Inline zsh treats arrays as 1-indexed and empties `need[0]`, producing bogus job names like `abl-*-a`.
+- Durable Mac runners: prefer `screen -dmS … bash scripts/…` over Cursor-shell `nohup`; the agent sandbox can kill detached jobs and blocks `ps`/`kill` of other PIDs. Keep using Harbor `jobs/` as primary evidence.
+- `abl-9b-t8v4` (9B @ max_turns=8, 3×5) finished with usable Pi sessions on one 45m m4999 serve: parallel **1/63 = 1.59%** (one actionlint turn with 3 calls). Comparable to 9B@50 baseline 1.67%.
+- `abl-4b-t8v1` (4B-Instruct-2507 @ max_turns=8, 3×5, hermes parser): parallel **0/67 = 0.00%**. Model id must stay `Qwen/Qwen3-4B-Instruct-2507` unless teammate confirms otherwise.
+- `abl-4b-t50v1` (same 4B @ max_turns=50, 3×5): parallel **0/95 = 0.00%**. Finished in ~51m on one alloc; `scancel` immediately on DONE.
+- Batched restart remains the safety net if EngineDead returns; unset stale `SYSML_JOB_PREFIX` before switching arms so need[] does not skip under the wrong wave.
+- Protect m4999 hours: poll every few minutes during live serves; `scancel` immediately on backend death, Harbor stall (~12 min no session progress and no env/verifier container), or arm completion. Never leave a ready vLLM idle while the Mac runner is dead.
+
+## Trace retention (Harbor-native is primary)
+
+- Every attempt must keep the **standard Harbor trial directory** under `jobs/<job-name>/<task_id>__<suffix>/`.
+- Required artifacts: `result.json`, `agent/pi/sessions/*.jsonl`, `verifier/reward.json`, and patch under `artifacts/` when present. Prefer also `agent/trajectory.json` / `agent/pi.txt`.
+- Do not discard or overwrite prior trials; use a unique `--job-name` / jobs subdir per campaign wave.
+- Prefer short `--job-name` prefixes and `k=1` loops over `k=5` in one Harbor invocation on Docker Desktop: long `jobs/<wave>-<task>/<task>__suffix/...` bind paths can race (`bind source path does not exist`). Agent-phase traces still count for characterization if verifier build fails; mark verifier failures explicitly and do not invent rewards.
+- Harbor/verifier builds: set `DOCKER_BUILDKIT=0` / `COMPOSE_DOCKER_CLI_BUILD=0` when buildx fails with `operation not permitted` on `~/.docker/buildx/refs` temp files. Classic builder works for DeepSWE verifier Dockerfiles.
+- Normalized CSV/manifest exports are secondary aids for aggregation. Re-derive counts from Harbor Pi session JSONL when in doubt.
+- `cache_mode=none` for characterization; record model id, task, attempt index, and Harbor/Pi versions in the campaign manifest that points at these Harbor paths.
 
 ## Model changes
 
@@ -49,3 +79,11 @@ Any live run needs fresh values for: SSH proxy freshness, `SYSML_REMOTE_ROOT`, S
 
 - Never share `.local-smoke/`, `.env`, `jobs/`, or raw `results/` wholesale.
 - Teammate pack: `bash scripts/pack_team_share.sh`. See `docs/TEAM_SHARE.md`.
+
+## Canonical TVCache references
+
+- Paper (ICML 2026): *TVCACHE: A Stateful Tool-Value Cache for Post-Training LLM Agents* — [arXiv:2602.10986](https://arxiv.org/abs/2602.10986) ([PDF](https://arxiv.org/pdf/2602.10986), [HTML](https://arxiv.org/html/2602.10986), [slides](https://icml.cc/media/icml-2026/Slides/61148.pdf)). Authors include Abhishek Vijaya Kumar + Bhaskar Kataria (Cornell).
+- Assigned stack already vendored: `vendor/tvcache-rust/` (cache server, TCP `:7878`) and `vendor/tvclient/` (Python client / `TvcacheToolExecutor`). Upstream: https://github.com/abhivijay96/tvcache-rust , https://github.com/abhivijay96/tvclient . Original Python example: https://github.com/TVCache/TVCache .
+- Sandbox/snapshot side: https://github.com/bhaskar792/container-manager-public (Bhaskar; pairs with selective snapshot/fork in the paper).
+- Inference is separate: vLLM (https://vllm.ai) on NERSC; TVCache is a tool-value / trajectory cache, not a KV attention cache.
+- Upstream roadmap explicitly lists “Representing parallel tool-calls during transitions” — that is the C/D gap this project targets.

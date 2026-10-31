@@ -44,20 +44,25 @@ Do not change instruction text, Dockerfile, or verifier. Reward 0 is a valid gra
 
 ## Trace format (required, so we can count commands)
 
-For every attempt, keep Harbor’s native trial directory and also export a normalized call log.
+**Primary: standard Harbor trial layout.** Do not substitute a custom log format for this. Every attempt must leave an intact Harbor job tree; analysis reads Pi sessions from it. Optional CSV/manifest exports are secondary.
 
 ### 1. Native Harbor / Pi (source of truth)
 
-Preserve the trial folder, especially:
+Preserve the trial folder under `jobs/` (Harbor’s default), especially:
 
 ```text
 jobs/<job-or-run-id>/<task_id>__<suffix>/
   result.json
+  config.json / lock.json
   agent/pi/sessions/*.jsonl          # REQUIRED for tool-call counting
   agent/trajectory.json               # if present
+  agent/pi.txt                        # if present
   verifier/reward.json
+  verifier/ctrf.json                  # if present
   artifacts/logs/artifacts/model.patch
 ```
+
+Use a distinct Harbor `--job-name` (or jobs subdir) per campaign wave so runs are not overwritten. Never delete graded trials to “clean up.”
 
 Pi session JSONL: each assistant message is one **turn**. Tool calls are content parts with `"type":"toolCall"` (or `tool_call`) and fields `id`, `name`, `arguments`.
 

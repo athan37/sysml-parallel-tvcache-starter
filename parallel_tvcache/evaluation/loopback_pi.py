@@ -36,12 +36,38 @@ class LoopbackPi(Pi):
             '</dev/null >/tmp/sysml-model-transport.log 2>&1 &'))
 
     async def run(self, instruction, environment, context):
-        # This runs inside Harbor's agent phase. Check its configured policy
-        # and observe model/external HTTP probes before invoking official Pi.
-        if environment.network_policy.network_mode.value != 'no-network':
-            raise RuntimeError('The optional transport requires unchanged no-network agent policy')
+        # Runs inside Harbor's agent phase. Default DeepSWE cell: no-network +
+        # model via Unix-socket relay. Setup-as-agent-actions variants need
+        # public/allowlist egress for clone/install; set SYSML_ALLOW_AGENT_EGRESS=1
+        # (or rely on a non-no-network agent policy) and skip the isolation probe.
+        mode = environment.network_policy.network_mode.value
+        allow_egress = (
+            os.environ.get('SYSML_ALLOW_AGENT_EGRESS', '').strip() in ('1', 'true', 'yes')
+            or mode in ('public', 'allowlist')
+        )
+        if mode != 'no-network' and not allow_egress:
+            raise RuntimeError(
+                'The optional transport requires no-network agent policy '
+                '(or SYSML_ALLOW_AGENT_EGRESS=1 / public|allowlist for setup variants)'
+            )
         expected_model = os.environ.get('SYSML_MODEL_ID', 'Qwen/Qwen3-0.6B')
-        probe = f"""python3 - <<'PYPROBE'
+        if allow_egress:
+            probe = f"""python3 - <<'PYPROBE'
+import json, time, urllib.request
+expected = {expected_model!r}
+for attempt in range(30):
+    try:
+        models = json.load(urllib.request.urlopen('http://127.0.0.1:18081/v1/models', timeout=15))
+        break
+    except OSError:
+        if attempt == 29:
+            raise
+        time.sleep(0.1)
+assert any(m['id'] == expected for m in models['data']), (expected, models)
+print('MODEL_LOOPBACK_OK; AGENT_EGRESS_ALLOWED')
+PYPROBE"""
+        else:
+            probe = f"""python3 - <<'PYPROBE'
 import json, time, urllib.request
 expected = {expected_model!r}
 for attempt in range(30):
