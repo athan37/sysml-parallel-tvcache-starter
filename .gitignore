@@ -23,7 +23,7 @@ __pycache__/
 vendor/*
 !vendor/.gitkeep
 
-# Private experiment evidence (keep locally; do not zip/share wholesale)
+# Local experiment evidence (gitignored; not on origin)
 jobs/
 results/
 rollouts/

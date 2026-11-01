@@ -62,7 +62,8 @@ def test_manifest_excludes_infrastructure_failure(tmp_path):
 
 def test_real_smoke_manifest_loads():
     path = ROOT / "configs" / "manifests" / "m4999-0.6b-smoke.json"
-    if not (ROOT / "jobs" / "m4999-pi-60365877").exists():
+    # Optional local-evidence test; manifests/ and old smoke jobs are not required in-repo.
+    if not path.exists() or not (ROOT / "jobs" / "m4999-pi-60365877").exists():
         return
     manifest = load_manifest(path)
     attempts = select_attempt_roots(manifest, ROOT)

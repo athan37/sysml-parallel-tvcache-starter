@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# One DeepSWE task, one attempt, no TVCache. This is the infrastructure smoke test.
+# Optional local smoke: one DeepSWE task, k=1 n=1, no NERSC gateway path.
+# Experiment waves use scripts/run_experiment.sh (k=n=seqs=5 by default).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 if [[ -f .env ]]; then

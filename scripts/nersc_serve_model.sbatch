@@ -30,11 +30,12 @@ export VLLM_USE_FLASHINFER_SAMPLER=0
 mkdir -p "logs/inference-$SLURM_JOB_ID/diagnostics"
 run_dir="$PWD/logs/inference-$SLURM_JOB_ID"
 export SYSML_INFERENCE_RUN="$run_dir"
-MODEL="${SYSML_MODEL_ID:-Qwen/Qwen3-0.6B}"
+MODEL="${SYSML_MODEL_ID:-Qwen/Qwen3.5-9B}"
 MAX_MODEL_LEN="${SYSML_MAX_MODEL_LEN:-8192}"
-GPU_MEM_UTIL="${SYSML_GPU_MEMORY_UTILIZATION:-0.3}"
-MAX_NUM_SEQS="${SYSML_MAX_NUM_SEQS:-1}"
-TOOL_PARSER="${SYSML_TOOL_CALL_PARSER:-hermes}"
+# Defaults match concurrent pass@k (n=k=seqs=5). Wave script exports these explicitly.
+GPU_MEM_UTIL="${SYSML_GPU_MEMORY_UTILIZATION:-0.80}"
+MAX_NUM_SEQS="${SYSML_MAX_NUM_SEQS:-5}"
+TOOL_PARSER="${SYSML_TOOL_CALL_PARSER:-qwen3_coder}"
 # Optional extra vLLM CLI tokens, space-separated, e.g. "--reasoning-parser qwen3"
 # shellcheck disable=SC2206
 EXTRA_ARGS=( ${SYSML_VLLM_EXTRA_ARGS:-} )

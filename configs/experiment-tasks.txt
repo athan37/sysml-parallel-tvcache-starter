@@ -1,0 +1,16 @@
+# Experiment task ids (one per line). Setup variants live under
+# variants/deep-swe-setup/tasks/<id>/ — build with:
+#   .venv/bin/python scripts/prepare_task.py <id> --setup-as-agent-actions --force
+#
+# Pilot 3 (historical Exp A cell)
+clack-async-autocomplete-options
+httpx-streaming-json-iteration
+actionlint-action-pinning-lint
+# +7 sampled for 10-task wave (language mix: Python / TS-JS / Go / other)
+fastapi-deprecation-response-headers
+bandit-incremental-cache-control
+drizzle-orm-window-function-builders
+ink-grid-box-layout
+happy-dom-abort-pending-body-reads
+go-git-worktree-merge-conflicts
+katex-multicolumn-array-spans
