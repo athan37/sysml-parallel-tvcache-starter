@@ -1,0 +1,7 @@
+# Stock DeepSWE (not setup variants). Match PDF tops that also appear in Exp A.
+# PDF: Qwen3-4B-Instruct (MLX) | 1 trial x 8 steps | mean parallel ~48%.
+fastapi-deprecation-response-headers
+katex-multicolumn-array-spans
+drizzle-orm-window-function-builders
+actionlint-action-pinning-lint
+clack-async-autocomplete-options

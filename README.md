@@ -79,6 +79,7 @@ artifacts/
 docs/
   project_assignment.pdf
   workload_characterization_report.md      Exp A cells A0–A2 (one table; extend by row)
+  parallel_prompt_stress_report.md         MLX forced-parallel prompt stress (not natural Exp A)
 parallel_tvcache/         Harbor/Pi adapters, model transport, measurement, cache prototype
 variants/                 Harbor task dirs (instruction + thin image); see below
 configs/                  example.env · experiment-tasks.txt · model-gateway.Dockerfile · models/ (A0–A2 env examples)
@@ -182,7 +183,7 @@ bash scripts/run_experiment.sh none   # prefer Terminal.app / screen
 | --- | --- |
 | Exp A (`none`) | Cells **A0–A2** in the report — reward 0 on 9B; Gary retries with a **stronger ~27B** tonight |
 | Exp B sequential TVCache | **Start anytime** — wire `tvclient` on Pi tool-execute; use `none` A0/A1 as no-cache baseline |
-| Exp C | Wait until parallel-turn > 0 |
+| Exp C | Wait until parallel-turn > 0 on **natural** Exp A; stress surface already >0 — see `docs/parallel_prompt_stress_report.md` |
 
 ### Experiment A — historical 3-task cell (2026-10-30)
 
