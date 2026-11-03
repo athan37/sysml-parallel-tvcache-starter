@@ -130,13 +130,13 @@ python -m pytest -q                           # sanity-check unit tests
 docker build -f configs/model-gateway.Dockerfile -t sysml-model-gateway:refactor-check .
 ```
 
-## Project status — 2026-11-01
+## Project status — 2026-11-03
 
 | Experiment | Mode flag | What we measure | Status |
 | --- | --- | --- | --- |
-| **A** | `none` | Parallel-turn fraction (turns with >1 tool call / all assistant turns) | **Done** — `docs/workload_characterization_report.md` (cells A0–A2) |
-| **B** | `sequential` | Sequential TVCache hit rate / tool-wait (shared TCG across concurrent pass@k) | Not wired yet |
-| **C** | `parallel` | Parallel-aware TVCache (within-turn N>1) | Not wired yet |
+| **A** | `none` | Reward; parallel-turn fraction; cross-rollout TCG prefix | **Done** on 9B — `docs/workload_characterization_report.md` (A0–A2). Reward 0 (tasks hard for 9B); parallel≈0; TCG overlap non-zero |
+| **B** | `sequential` | Sequential TVCache hit rate / tool-wait (shared TCG across concurrent pass@k) | **Start in parallel** — stub until `tvclient` on tool path |
+| **C** | `parallel` | Parallel-aware TVCache (within-turn N>1) | Wait (parallel-turn still ≈0) |
 
 One runner; pick the mode you want (A-only, B-only, C-only, or `all`). It does **not** re-run other modes unless you pass `all`.
 
@@ -164,7 +164,7 @@ bash scripts/run_experiment.sh all          # A, then B, then C
 Later cells (A1 256K/TP4, A2 thinking/TP2 pilots): same report table — **reward 0**, parallel ~0, **prefer TP=2** for 9B; next capability ≈27B. Env examples under `configs/models/`.
 
 ```bash
-# A1-style (4 GPU / 256K) or TP2 pilot: source the matching configs/models/*.env.example
+# TP2 / thinking pilot (or pick another configs/models/*.env.example). Use YOUR pscratch root — see Reproduce.
 export SYSML_NERSC_USER=<user>
 export SYSML_REMOTE_ROOT=/pscratch/sd/<letter>/<user>/sysml_parallel_tvcache
 export SYSML_SSH_HOST=perlmutter SYSML_SLURM_ACCOUNT=m4999
@@ -178,9 +178,9 @@ bash scripts/run_experiment.sh none   # prefer Terminal.app / screen
 
 | Owner track | Status |
 | --- | --- |
-| Exp A (`none`) | Cells **A0–A2** in `docs/workload_characterization_report.md` — no reward>0 on 9B; Gary tries a **stronger model later tonight** |
-| Exp B sequential TVCache | **Start anytime in parallel** — wire `tvclient` on Pi tool-execute; `run_experiment.sh sequential` stub until that lands; use A0/A1/`none` as no-cache baseline |
-| Exp C | Wait for within-turn parallelism (still ~0 on 9B setup variants) |
+| Exp A (`none`) | Cells **A0–A2** in the report — reward 0 on 9B; Gary retries with a **stronger ~27B** tonight |
+| Exp B sequential TVCache | **Start anytime** — wire `tvclient` on Pi tool-execute; use `none` A0/A1 as no-cache baseline |
+| Exp C | Wait until parallel-turn > 0 |
 
 ### Experiment A — historical 3-task cell (2026-10-30)
 
@@ -190,67 +190,85 @@ Earlier baseline **before** concurrent defaults: prefix `char-setup-9b-t8v2`, 3 
 
 ## Reproduce experiments
 
-Placeholders are **shell env vars**. Replace angle brackets, `export` them, then run.
+**Two different goals:**
+
+| Goal | What to do |
+| --- | --- |
+| Re-analyze published Exp A numbers | Unzip the shared Drive traces into this repo → `bash scripts/analyze_characterization_wave.sh <prefix>` (see report for prefixes) |
+| Re-run the same *kind* of Exp A wave | Mac **Install** above + **your own** NERSC `SYSML_REMOTE_ROOT` below (traces will not match bit-for-bit) |
+
+**`SYSML_REMOTE_ROOT` is per teammate** — use `/pscratch/sd/<first-letter-of-user>/<user>/sysml_parallel_tvcache` (or any writable pscratch dir). Do **not** hard-code someone else’s path. Harbor/Pi stay on the Mac; only vLLM + weights live under that root.
+
+One-time on NERSC (after MFA), from a login node with that root exported:
+
+```bash
+# on perlmutter — create YOUR root once
+export SYSML_REMOTE_ROOT=/pscratch/sd/<letter>/<user>/sysml_parallel_tvcache
+mkdir -p "$SYSML_REMOTE_ROOT"/{hf-cache,secrets,logs}
+# venv with vLLM (name must be env-model — sbatch expects it):
+#   cd "$SYSML_REMOTE_ROOT" && python -m venv env-model && source env-model/bin/activate && pip install 'vllm>=0.10' ...
+# weights into $SYSML_REMOTE_ROOT/hf-cache (or run scripts/download_qwen3_5_9b.py with REMOTE_ROOT set, on a node that can reach HF)
+# API key file the serve reads:
+#   openssl rand -hex 24 > "$SYSML_REMOTE_ROOT/secrets/model-api-key" && chmod 600 "$SYSML_REMOTE_ROOT/secrets/model-api-key"
+```
+
+Wave will `scp` `nersc_serve_model.sbatch` into that root each run. Setup-task variants are already under `variants/deep-swe-setup/tasks/` in git.
+
+Placeholders below are **shell env vars** — replace angle brackets, then `export`.
 
 | Variable | Set to |
 | --- | --- |
-| `SYSML_NERSC_USER` | your NERSC username |
-| `SYSML_REMOTE_ROOT` | `/pscratch/sd/<letter>/<user>/sysml_parallel_tvcache` |
+| `SYSML_NERSC_USER` | **your** NERSC username |
+| `SYSML_REMOTE_ROOT` | **your** pscratch project dir (pattern above) |
 | `SYSML_SSH_HOST` | usually `perlmutter` |
 | `SYSML_SLURM_ACCOUNT` | `m4999` |
 | `SYSML_JOB_PREFIX` | unique wave name, e.g. `char-setup-10t-k5-rerun` |
-| `SYSML_TUNNEL_LOCAL_PORT` | e.g. `18086` |
-| `SYSML_PASS_K` | attempts per task (default **5**) |
-| `SYSML_HARBOR_N` | concurrent agent sandboxes (default **5**, usually = k) |
-| `SYSML_MAX_NUM_SEQS` | vLLM continuous-batching cap (default **5**, usually = k) |
-| `SYSML_MAX_MODEL_LEN` / `SYSML_CONTEXT_WINDOW` | vLLM + Pi context (A0 **8192**; A1 **262144**) |
-| `SYSML_MAX_TURNS` | Pi turn ceiling (A0 **8**; A1 **100**) |
-| `SYSML_GPUS` / `SYSML_TENSOR_PARALLEL_SIZE` | Slurm GPUs + vLLM TP (A0 **1**; A1 **4**) |
-| `SYSML_SLURM_QOS` | e.g. `shared_interactive` (1 GPU) or `interactive` (multi-GPU) |
-| `SYSML_GPU_MEMORY_UTILIZATION` | A0 **0.80**; A1 example **0.90** |
+| `SYSML_TUNNEL_LOCAL_PORT` | free local port, e.g. `18086` |
+| `SYSML_PASS_K` / `SYSML_HARBOR_N` / `SYSML_MAX_NUM_SEQS` | usually all **5** |
+| `SYSML_MAX_MODEL_LEN` / `SYSML_CONTEXT_WINDOW` | A0 **8192**; A1/A2 **262144** |
+| `SYSML_MAX_TURNS` | A0 **8**; A1 **100**; A2 pilots **250–500** |
+| `SYSML_GPUS` / `SYSML_TENSOR_PARALLEL_SIZE` | A0 **1**; A1 **4**; preferred A2+ **2** |
+| `SYSML_SLURM_QOS` | `shared_interactive` (1 GPU) or `interactive` (multi-GPU) |
+| `SYSML_GPU_MEMORY_UTILIZATION` | A0 **0.80**; multi-GPU examples **0.90** |
 | `SYSML_ATTACH_JOB` / `SYSML_ATTACH_NODE` | optional: reuse a live READY serve after a Mac runner death |
 
-`run_harbor_wave.sh` also sets `OPENAI_API_KEY=EMPTY` and `OPENAI_BASE_URL=http://127.0.0.1:18081/v1` for Harbor Pi’s custom endpoint. **Do not omit these** if you wrap `harbor run` yourself — missing base URL → zero sessions.
+Or source a cell env: `set -a && source configs/models/<cell>.env.example && set +a`, then still export **your** `SYSML_NERSC_USER` + `SYSML_REMOTE_ROOT`.
+
+`run_harbor_wave.sh` sets `OPENAI_API_KEY=EMPTY` and `OPENAI_BASE_URL=http://127.0.0.1:18081/v1` for Harbor Pi. **Do not omit** if you wrap `harbor run` yourself.
 
 ### 1. Connect to NERSC (MFA)
 
 ```bash
-sshproxy -u <user> -f    # opens browser (Iris / federated login + authenticator OTP)
+sshproxy -u <user> -f    # browser Iris / federated login + OTP
 ssh perlmutter           # optional check, then exit
 ```
 
-### 2. Export env + run
+### 2. Export env + run (Mac)
 
 ```bash
 export SYSML_NERSC_USER=<user>
-export SYSML_REMOTE_ROOT=/pscratch/sd/<letter>/<user>/sysml_parallel_tvcache
+export SYSML_REMOTE_ROOT=/pscratch/sd/<letter>/<user>/sysml_parallel_tvcache   # YOUR root
 export SYSML_SSH_HOST=perlmutter
 export SYSML_SLURM_ACCOUNT=m4999
+# A0 baseline (or: source configs/models/qwen3.5-9b-kvpack-tp2-think-high.env.example for TP2/thinking)
 export SYSML_JOB_PREFIX=char-setup-10t-k5-rerun
 export SYSML_TUNNEL_LOCAL_PORT=18086
-export SYSML_PASS_K=5
-export SYSML_HARBOR_N=5
-export SYSML_MAX_NUM_SEQS=5
+export SYSML_PASS_K=5 SYSML_HARBOR_N=5 SYSML_MAX_NUM_SEQS=5
 export SYSML_GPU_MEMORY_UTILIZATION=0.80
-export SYSML_TASKS_PER_ALLOC=2    # recycle NERSC serve every 2 tasks
+export SYSML_TASKS_PER_ALLOC=2
 export DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0
-# OOM on 9B? lower N/SEQS, or set SYSML_MODEL_ID to a 4B and match MODEL=/gateway.
-# Resume a live serve (do not scancel first):
-#   export SYSML_ATTACH_JOB=<jobid> SYSML_ATTACH_NODE=<nidXXXXXX>
 
-# Prefer Terminal.app or screen — Cursor-shell nohup can reap Harbor while Slurm keeps running:
+# Prefer Terminal.app / screen (Cursor-shell nohup can reap Harbor):
 screen -dmS char10 bash scripts/run_experiment.sh none
-# GPU log is written by the wave: results/characterization/$SYSML_JOB_PREFIX/gpu-monitor.log
 ```
 
 When finished: `ssh perlmutter scancel -u <user> -n sysml-char-9b`
 
-### 3. Analyze (Experiment A metric)
+### 3. Analyze
 
 ```bash
 bash scripts/analyze_characterization_wave.sh "$SYSML_JOB_PREFIX"
-# writes results/characterization/<prefix>/parallel_summary.json
-# GPU memory samples: results/characterization/<prefix>/gpu-monitor.log
+# → results/characterization/<prefix>/parallel_summary.json (+ gpu-monitor.log if present)
 ```
 
 ## References
