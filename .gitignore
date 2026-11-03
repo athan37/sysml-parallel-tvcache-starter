@@ -23,6 +23,9 @@ __pycache__/
 vendor/*
 !vendor/.gitkeep
 
+# Generated forced-parallel stress variants (rebuild with prepare_parallel_stress.py)
+variants/deep-swe-parallel-stress/
+
 # Local experiment evidence (gitignored; not on origin)
 jobs/
 results/

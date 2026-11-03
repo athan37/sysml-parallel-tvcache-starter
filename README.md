@@ -82,10 +82,12 @@ docs/
   parallel_prompt_stress_report.md         MLX forced-parallel prompt stress (not natural Exp A)
 parallel_tvcache/         Harbor/Pi adapters, model transport, measurement, cache prototype
 variants/                 Harbor task dirs (instruction + thin image); see below
-configs/                  example.env · experiment-tasks.txt · model-gateway.Dockerfile · models/ (A0–A2 env examples)
+configs/                  example.env · experiment-tasks.txt · experiment-tasks-parallel-stress.txt · models/
 scripts/
   setup_repositories.sh       clone vendor deps
   prepare_task.py             rebuild a task variant under variants/
+  prepare_parallel_stress.py  prepend max-parallel instruction (stress only; not Exp A)
+  run_mlx_parallel_stress.sh  local MLX forced-parallel stress wave
   run_experiment.sh           only runner you need: mode = none|sequential|parallel|all
   run_harbor_wave.sh          NERSC + Harbor pass@k with n=k=seqs (default 5)
   nersc_serve_model.sbatch    vLLM on NERSC (reads SYSML_MAX_NUM_SEQS, etc.)

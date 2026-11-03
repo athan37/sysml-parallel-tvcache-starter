@@ -1,0 +1,24 @@
+# Forced-parallel stress task list (NOT Exp A characterization).
+# Build setup variants first, then:
+#   bash scripts/run_mlx_parallel_stress.sh
+# (prepare_parallel_stress.py prepends the max-parallel instruction.)
+#
+# Same 10 as experiment-tasks.txt, plus a few high-fanout add-ons from the
+# partial-113 stress wave (docs/parallel_prompt_stress_report.md).
+
+# Shared with Exp A 10-task list
+clack-async-autocomplete-options
+httpx-streaming-json-iteration
+actionlint-action-pinning-lint
+fastapi-deprecation-response-headers
+bandit-incremental-cache-control
+drizzle-orm-window-function-builders
+ink-grid-box-layout
+happy-dom-abort-pending-body-reads
+go-git-worktree-merge-conflicts
+katex-multicolumn-array-spans
+
+# Appended for forced-parallel stress (prepare via prepare_task.py first)
+abs-module-cache-flags
+boa-hierarchical-evaluation-cancellation
+fd-deterministic-multi-key-sorting

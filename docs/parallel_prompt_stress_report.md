@@ -98,7 +98,7 @@ Each row is **one task = one session**. **Tools/turn** is the sequence of tool-c
 3. **Still not 100% parallel turns** — and should not be: dependent edits/tests stay sequential; 0-call turns remain in the denominator.
 4. **Reward stays 0** on 4B — this measures **emission surface for Exp C**, not DeepSWE solve rate.
 5. **Do not cite forced-parallel rates as DeepSWE characterization**; cite Exp A for natural (no-append) rates.
-6. Stress runner / `MultitoolPi` / `variants/deep-swe-parallel-stress` were **removed in cleanup**; resume needs restoring those before finishing the 72 leftover tasks.
+6. **Reproduce (local MLX):** prepare setup variants for ids in `configs/experiment-tasks-parallel-stress.txt`, then `bash scripts/run_mlx_parallel_stress.sh`. Generated stress dirs under `variants/deep-swe-parallel-stress/` are gitignored.
 
 ---
 
@@ -110,6 +110,7 @@ Each row is **one task = one session**. **Tools/turn** is the sequence of tool-c
 | Docker / host OOM mid-wave | Desktop RAM ≥12GB; mem gate free≥4GB; prune between tasks; `n=1` |
 | Cursor reaps Harbor | Terminal.app / `screen` |
 | Re-analyze only | `bash scripts/analyze_characterization_wave.sh stress-mlx-maxparallel-all113` |
+| Re-run stress | `bash scripts/run_mlx_parallel_stress.sh` (task list: `configs/experiment-tasks-parallel-stress.txt`) |
 
 ---
 
