@@ -1,0 +1,3 @@
+# A2 pilot: single task × pass@5 to size max_turns / max_tokens before a full 10-task wave.
+# Same setup variant as A0/A1 first task (known long, bash-heavy setup then edits).
+clack-async-autocomplete-options

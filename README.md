@@ -58,13 +58,13 @@ run_experiment.sh none
 | Step | Code | What it does |
 | --- | --- | --- |
 | Mode | `scripts/run_experiment.sh` | `none` → wave; `sequential` / `parallel` stub until TVCache is wired |
-| Serve | `serve_up()` in `scripts/run_harbor_wave.sh` → `scripts/nersc_serve_model.sbatch` | `salloc --gpus-per-node=1 --constraint=gpu`, then `vllm serve` |
+| Serve | `serve_up()` in `scripts/run_harbor_wave.sh` → `scripts/nersc_serve_model.sbatch` | `salloc --gpus-per-node=$SYSML_GPUS`, then `vllm serve --tensor-parallel-size $SYSML_TENSOR_PARALLEL_SIZE` |
 | Bridge | `bridge_up()` in `scripts/run_harbor_wave.sh` | SSH forward + `sysml-model-gateway` (OpenAI Chat Completions proxy: `model.sock` → tunnel → vLLM) |
 | Harbor | `run_task()` → `harbor run … -a …LoopbackPi` | Builds agent/verifier containers from the task folder; spawns up to **n** Pi agents |
 | Pi | `parallel_tvcache/evaluation/loopback_pi.py` | Official Harbor Pi + in-sandbox model relay; tools stay in the agent container |
 | TVCache | — | **Not started** for `none`. Exp B/C will share one Mac-side `tvcache-rust` across the concurrent rollouts |
 
-**Why 1 GPU for 5 concurrent agents?** Five rollouts are five Chat Completions clients to the **same** model. vLLM **continuous-batches** them on one GPU (`--max-num-seqs 5`). Extra GPUs would mean tensor-parallel (split one model) or a second replica + load balancer—neither is required for 9B at seqs=5, and both cost more m4999 hours. If KV OOMs, lower seqs/n or use 4B before adding GPUs.
+**GPUs vs concurrency:** Five rollouts are five Chat Completions clients to one vLLM (`--max-num-seqs 5`). At **8K** context, **1×A100** is enough (cell A0). At **256K×5**, KV needs **tensor parallel** across multiple GPUs (cell A1: 4×A100, `--tensor-parallel-size 4`) — not a second replica.
 
 **`bridge_up` in one line:** yes — it is our Mac-side Chat Completions gateway (plus the SSH tunnel). Agents never talk to NERSC directly; they hit the Unix socket → gateway → tunnel → vLLM `/v1/chat/completions`.
 
@@ -76,10 +76,12 @@ Key files in order: `run_experiment.sh` → `run_harbor_wave.sh` → `nersc_serv
 README.md                 teammate entrypoint
 docs/
   project_assignment.pdf
-  workload_characterization_report.md   Exp A write-up (10×pass@5 cell)
+  workload_characterization_report.md      Exp A cell A0
+  workload_characterization_report_A1.md   Exp A cell A1 (256K / TP4)
+  workload_characterization_report_A2.md   Exp A pilots (thinking / TP2)
 parallel_tvcache/         Harbor/Pi adapters, model transport, measurement, cache prototype
 variants/                 Harbor task dirs (instruction + thin image); see below
-configs/                  example.env · experiment-tasks.txt · model-gateway.Dockerfile · models/
+configs/                  example.env · experiment-tasks.txt · model-gateway.Dockerfile · models/ (A0–A2 env examples)
 scripts/
   setup_repositories.sh       clone vendor deps
   prepare_task.py             rebuild a task variant under variants/
@@ -87,6 +89,7 @@ scripts/
   run_harbor_wave.sh          NERSC + Harbor pass@k with n=k=seqs (default 5)
   nersc_serve_model.sbatch    vLLM on NERSC (reads SYSML_MAX_NUM_SEQS, etc.)
   monitor_nersc_gpu.sh        poll nvidia-smi on the live alloc (GPU memory)
+  monitor_vllm_metrics.sh     poll vLLM /metrics (KV% / Running / Waiting) via tunnel
   download_qwen3_5_9b.py      optional: pull weights onto NERSC
   analyze_characterization_wave.sh   parallel-turn fraction for a job prefix
   check_trial.py              post-trial check used by the wave
@@ -157,14 +160,72 @@ bash scripts/run_experiment.sh all          # A, then B, then C
 | Job prefix | `char-setup-10t-k5` |
 | GPU | A100-80GB · steady ~65 GiB used · **no OOM** at seqs=5 |
 | Result | **0 / 199 = 0.00%** parallel · **50/50** sessions · reward **0** all trials · bash-dominated sequential turns |
-| Write-up | `docs/workload_characterization_report.md` (**cell A0** baseline; next: longer context / turns as A1) |
+| Write-up | `docs/workload_characterization_report.md` (**cell A0**) |
 | Artifacts | `results/characterization/char-setup-10t-k5/` · `jobs/char-setup-10t-k5-*/` |
+
+### Experiment A — longer-context cell A1 (2026-11-01 → 02)
+
+| Item | Value |
+| --- | --- |
+| Goal | Same 10-task pass@5 with context large enough for setup tool output |
+| Context / turns | **`max_model_len=262144`**, Pi `contextWindow=262144`, **`max_turns=100`** |
+| Concurrency | **k=n=seqs=5** |
+| GPUs | **4×A100**, vLLM **`--tensor-parallel-size 4`** (40 GB and 80 GB nodes) |
+| Env | `configs/models/qwen3.5-9b-a1-tp4-256k.env.example` |
+| Job prefix | `char-setup-10t-ctx256k-t100` |
+| Result | **4 / 4989 = 0.08%** parallel · **50/50** sessions · reward **0** all · mostly **101-turn** traces · max prompt **~99 K** · binding limit = **turn ceiling** (not 256 K) |
+| Write-up | `docs/workload_characterization_report_A1.md` (**cell A1**) |
+| Artifacts | `results/characterization/char-setup-10t-ctx256k-t100/` · `jobs/char-setup-10t-ctx256k-t100-*/` |
+
+```bash
+export SYSML_NERSC_USER=<user>
+export SYSML_REMOTE_ROOT=/pscratch/sd/<letter>/<user>/sysml_parallel_tvcache
+export SYSML_SSH_HOST=perlmutter SYSML_SLURM_ACCOUNT=m4999
+set -a && source configs/models/qwen3.5-9b-a1-tp4-256k.env.example && set +a
+export DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0
+# Prefer Terminal.app / screen:
+bash scripts/run_experiment.sh none
+```
+
+If `interactive` QOS will not give 4 GPUs, set `SYSML_SLURM_QOS` to whatever your account allows for a 4-GPU node. If vLLM OOMs at start, try `SYSML_MAX_MODEL_LEN=131072` (and matching `SYSML_CONTEXT_WINDOW`) before dropping seqs.
+
+### Experiment A — A2 pilots + TP choice (2026-11-02 → 03)
+
+| Item | Value |
+| --- | --- |
+| Goal | After A1 turn/`max_tokens` wall: raise budgets, try **thinking=high**, compare **TP=4 vs TP=2** |
+| Best F2P so far (9B) | thinking=high, turns=250, tok=32K — clack avg **~7/82** F2P (TP2) / **~5.6/82** (TP4); **reward still 0** |
+| Parallel-turn | still **~0** |
+| TP verdict | **Prefer TP=2** at 256 K for later 9B waves (READY on 2×A100-40GB; KV peak ~27% at n=5) |
+| Env (TP2) | `configs/models/qwen3.5-9b-kvpack-tp2-think-high.env.example` |
+| Write-up | `docs/workload_characterization_report_A2.md` |
+| Next capability | stronger model (~27 B class) — **not blocking** Exp B start |
+
+```bash
+# Replicate TP2 thinking=high clack-style pilot (1 Harbor task × n=5):
+export SYSML_NERSC_USER=<user>
+export SYSML_REMOTE_ROOT=/pscratch/sd/<letter>/<user>/sysml_parallel_tvcache
+export SYSML_SSH_HOST=perlmutter SYSML_SLURM_ACCOUNT=m4999
+set -a && source configs/models/qwen3.5-9b-kvpack-tp2-think-high.env.example && set +a
+export SYSML_TASK_PARALLEL=1   # Mac Docker: avoid 2×n=5 bind/subnet races
+export DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0
+# Terminal.app / screen:
+bash scripts/run_experiment.sh none
+```
+
+### Team status / parallel work
+
+| Owner track | Status |
+| --- | --- |
+| Exp A (this README path, `none`) | **A0+A1 done**; A2 pilots done on **Qwen3.5-9B** — no reward>0; Gary tries a **stronger model later tonight** |
+| Exp B sequential TVCache | **Start anytime in parallel** — wire `tvclient` on Pi tool-execute; `run_experiment.sh sequential` is still a stub until that lands; use A0/A1/`none` artifacts + reports as the no-cache baseline |
+| Exp C | Wait for within-turn parallelism signal (still ~0 on 9B setup variants) |
 
 ### Experiment A — historical 3-task cell (2026-10-30)
 
 Earlier baseline **before** concurrent defaults: prefix `char-setup-9b-t8v2`, 3 tasks, Harbor `-n 1` / `max-num-seqs 1`, **0 / 55 = 0.00%** parallel. Same qualitative shape; do not conflate with `char-setup-10t-k5`.
 
-**Runner knobs for re-runs:** `harbor -k 5 -n 5`, vLLM `--max-num-seqs 5`, recycle every `SYSML_TASKS_PER_ALLOC` (default 2) within ≤4h QOS. Host **must** export `OPENAI_BASE_URL=http://127.0.0.1:18081/v1` + `OPENAI_API_KEY=EMPTY` (already set inside `run_harbor_wave.sh`).
+**A0 re-run knobs:** `harbor -k 5 -n 5`, vLLM `--max-num-seqs 5`, 1 GPU, 8K (see `qwen3.5-9b-pilot.env.example`). Host **must** have `OPENAI_BASE_URL=http://127.0.0.1:18081/v1` + `OPENAI_API_KEY=EMPTY` (set inside `run_harbor_wave.sh`).
 
 ## Reproduce experiments
 
@@ -181,7 +242,11 @@ Placeholders are **shell env vars**. Replace angle brackets, `export` them, then
 | `SYSML_PASS_K` | attempts per task (default **5**) |
 | `SYSML_HARBOR_N` | concurrent agent sandboxes (default **5**, usually = k) |
 | `SYSML_MAX_NUM_SEQS` | vLLM continuous-batching cap (default **5**, usually = k) |
-| `SYSML_GPU_MEMORY_UTILIZATION` | default **0.80** (proven with 9B @ seqs=5 on A100-80GB; ~65 GiB steady) |
+| `SYSML_MAX_MODEL_LEN` / `SYSML_CONTEXT_WINDOW` | vLLM + Pi context (A0 **8192**; A1 **262144**) |
+| `SYSML_MAX_TURNS` | Pi turn ceiling (A0 **8**; A1 **100**) |
+| `SYSML_GPUS` / `SYSML_TENSOR_PARALLEL_SIZE` | Slurm GPUs + vLLM TP (A0 **1**; A1 **4**) |
+| `SYSML_SLURM_QOS` | e.g. `shared_interactive` (1 GPU) or `interactive` (multi-GPU) |
+| `SYSML_GPU_MEMORY_UTILIZATION` | A0 **0.80**; A1 example **0.90** |
 | `SYSML_ATTACH_JOB` / `SYSML_ATTACH_NODE` | optional: reuse a live READY serve after a Mac runner death |
 
 `run_harbor_wave.sh` also sets `OPENAI_API_KEY=EMPTY` and `OPENAI_BASE_URL=http://127.0.0.1:18081/v1` for Harbor Pi’s custom endpoint. **Do not omit these** if you wrap `harbor run` yourself — missing base URL → zero sessions.
@@ -230,6 +295,6 @@ bash scripts/analyze_characterization_wave.sh "$SYSML_JOB_PREFIX"
 ## References
 
 - Handout PDF: `docs/project_assignment.pdf`
-- Exp A report: `docs/workload_characterization_report.md`
+- Exp A reports: `docs/workload_characterization_report.md` (A0) · `_A1.md` · `_A2.md`
 - https://github.com/abhivijay96/tvcache-rust · https://github.com/abhivijay96/tvclient
 - https://github.com/harbor-framework/harbor · https://github.com/earendil-works/pi · https://github.com/datacurve-ai/deep-swe

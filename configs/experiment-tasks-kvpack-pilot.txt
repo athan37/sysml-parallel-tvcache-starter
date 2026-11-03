@@ -1,0 +1,3 @@
+# KV-pack pilot: two tasks so tool-pause gaps on one job can be filled by the other.
+clack-async-autocomplete-options
+httpx-streaming-json-iteration

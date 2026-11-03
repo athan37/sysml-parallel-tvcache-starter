@@ -1,0 +1,2 @@
+# Thinking-on pilot: one setup variant × pass@5 (compare to char-pilot1-clack-t500 thinking=off).
+clack-async-autocomplete-options

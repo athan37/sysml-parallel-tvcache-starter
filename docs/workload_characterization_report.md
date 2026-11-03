@@ -89,21 +89,10 @@ TCG prefix metric (same-task rollouts; call = name + canonical args): fraction o
 
 ---
 
-## Next cell (planned)
+## Next cells
 
-| Knob | Baseline `A0` | Next try `A1` |
-| --- | --- | --- |
-| Cell id / prefix | `A0` / `char-setup-10t-k5` | `A1` / e.g. `char-setup-10t-ctx256k-t100` |
-| `max_model_len` / context | 8192 | **262144 (256K)** |
-| `max_turns` | 8 | **100** (ceiling only; shorter traces are fine) |
-| pass@k / Harbor `-n` / `max-num-seqs` | 5 / 5 / 5 | **keep 5 / 5 / 5** |
-| GPUs | 1 × A100-80GB | **multi-GPU tensor-parallel** so 256K×5 fits (estimate **4 × A100-80GB**; confirm at vLLM start — see below) |
-| Fallback if still OOM | — | try **128K** at same 5 seqs, or 256K with more GPUs |
-| Report | this file | sibling `docs/workload_characterization_report_A1_*.md` |
-
-**Why more GPUs:** KV cache scales ~`max_model_len × max_num_seqs`. At 256K×5, KV alone for a ~9B GQA model is on the order of **~150–200 GiB+**, so one 80 GiB GPU is not enough while keeping seqs=5. Runner today is wired for `--gpus-per-node=1`; A1 needs TP/`gpus-per-node` plumbing before the wave.
-
-**Goal of A1:** same 10-task pass@5 characterization with context large enough that setup tool output does not kill trials; re-measure parallel-turn, TCG prefix overlap, stopReasons, GPU.
+- **`A1` (completed):** [`workload_characterization_report_A1.md`](workload_characterization_report_A1.md) — 256 K / turns=100 / TP=4; reward 0; turn ceiling binding.
+- **`A2` pilots (completed):** [`workload_characterization_report_A2.md`](workload_characterization_report_A2.md) — longer tokens/turns, thinking=high, TP=2; still reward 0; prefer TP=2 for later 9B waves.
 
 ---
 
