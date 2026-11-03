@@ -1,101 +1,52 @@
-# Experiment A — baseline workload characterization
+# Experiment A — workload characterization
 
-**Cell id:** `A0` · **prefix:** `char-setup-10t-k5` · **date:** 2026-11-01 · **mode:** `none` (no TVCache)  
-**Role:** baseline before longer-context / higher-turn re-runs. Sibling reports should reuse this layout.
-
-Artifacts: `results/characterization/char-setup-10t-k5/` · `jobs/char-setup-10t-k5-*/` · reproduce: root `README.md`.
-
----
-
-## Hyperparameters
-
-| Knob | Value |
-| --- | --- |
-| Model | `Qwen/Qwen3.5-9B` |
-| GPUs | **1** × A100-80GB (m4999, 32 CPU, 56G, `shared_interactive`) |
-| `max_model_len` / Pi `contextWindow` | **8192** |
-| `max_tokens` (completion) | 2048 |
-| `max_turns` | **8** |
-| pass@k / Harbor `-n` / vLLM `max-num-seqs` | **5 / 5 / 5** |
-| `gpu_memory_utilization` | **0.80** |
-| thinking | off |
-| Tasks | 10 setup variants (`configs/experiment-tasks.txt`) |
-| Alloc recycle | every 2 tasks (`SYSML_TASKS_PER_ALLOC=2`) |
-
-Steady GPU after load: **~65 GiB / 80 GiB**. No OOM at these knobs.
+**Mode:** `none` (no TVCache) · **Model (all cells below):** `Qwen/Qwen3.5-9B` · **Reproduce:** root `README.md`  
+**Tasks:** DeepSWE setup variants under `variants/deep-swe-setup/` (`configs/experiment-tasks.txt` = 10-task list).  
+**How to extend:** add one row to **Cells** (+ optional one-line note under **Notes**). Keep raw evidence in `results/characterization/<prefix>/` and `jobs/<prefix>-*/` (gitignored).
 
 ---
 
-## Headline metrics
+## Cells (summary)
 
-| Metric | Value |
-| --- | --- |
-| Sessions | **50 / 50** |
-| Parallel-turn fraction | **0.00** (0 / 199 turns with >1 tool call) |
-| Calls/turn | 0: 50 · 1: 149 · **≥2: 0** |
-| Tools | 149 calls (148 `bash`, 1 `read`) |
-| Cross-rollout TCG prefix overlap | **10%** of call steps share a prefix with another rollout of the same task; mean pairwise LCP **0.13**; max shared length **1** |
-| Verifier | **all 50 failed** (reward 0) |
-| How trials ended | final `stopReason`: **`length` 38**, **`error` 12**, clean stop **0** |
+| Cell | Prefix | Ctx / turns / tok | Think | TP×GPU | Scope | Sess | Rew>0 | Parallel-turn | Binding limit | Peak prompt | Notes |
+| --- | --- | --- | --- | ---: | --- | ---: | ---: | --- | --- | --- | --- |
+| **A0** | `char-setup-10t-k5` | 8K / 8 / 2K | off | 1×80GB | 10 tasks × n=5 | 50/50 | **0** | **0.00** (0/199) | **8K context** | ~8K | final `length`×38 `error`×12; TCG prefix overlap ~10% |
+| **A1** | `char-setup-10t-ctx256k-t100` | 256K / 100 / 2K | off | 4 | 10×n=5 | 50/50 | **0** | **0.0008** (4/4989) | **turn ceiling** (+ mid-turn tok=2K trunc) | ~99K | mostly 101 turns; TCG overlap ~0.6%; f2p≈0 |
+| **A2a** | `char-pilot1-clack-t500` | 256K / 500 / 16K | off | 4 | clack ×5 | 5/5 | **0** | ~0 | capability (clean `stop`) | ~147K | f2p≈0.2/82 |
+| **A2b** | `char-think1b-clack-t250` | 256K / 250 / 32K | **high** | 4 | clack ×5 | 5/5 | **0** | ~0 | capability | ~144K | f2p≈5.6/82; KV~3–11% |
+| **A2c** | `char-kvpack-tp2-think-high-n10` | 256K / 250 / 32K | **high** | **2** | clack ×5 (httpx Docker-fail) | 5/5 | **0** | ~0.002 | capability | ~131K | f2p≈7.0/82; KV peak **~27%**; prefer **TP=2** |
 
-**Read:** no within-turn multi-call. Little exact cross-rollout tool-prefix reuse (arguments diverge fast). Binding failure mode is **8K context**, not the 8-turn cap.
+Env examples: `configs/models/qwen3.5-9b-pilot.env.example` (A0) · `…-a1-tp4-256k.env.example` (A1) · `…-a2-pilot1-t500` / `…-think-pilot1-clack` / `…-kvpack-tp2-think-high` (A2*).
 
----
-
-## Workload
-
-Setup-as-agent-actions DeepSWE tasks under `variants/deep-swe-setup/tasks/`:
-
-`clack-async-autocomplete-options`, `httpx-streaming-json-iteration`, `actionlint-action-pinning-lint`, `fastapi-deprecation-response-headers`, `bandit-incremental-cache-control`, `drizzle-orm-window-function-builders`, `ink-grid-box-layout`, `happy-dom-abort-pending-body-reads`, `go-git-worktree-merge-conflicts`, `katex-multicolumn-array-spans`
-
-| Task | Sess | Turns | Calls | Multi |
-| --- | ---: | ---: | ---: | ---: |
-| clack-async-autocomplete-options | 5 | 14 | 9 | 0 |
-| httpx-streaming-json-iteration | 5 | 11 | 6 | 0 |
-| actionlint-action-pinning-lint | 5 | 38 | 33 | 0 |
-| fastapi-deprecation-response-headers | 5 | 13 | 8 | 0 |
-| bandit-incremental-cache-control | 5 | 12 | 7 | 0 |
-| drizzle-orm-window-function-builders | 5 | 20 | 15 | 0 |
-| ink-grid-box-layout | 5 | 29 | 24 | 0 |
-| happy-dom-abort-pending-body-reads | 5 | 12 | 7 | 0 |
-| go-git-worktree-merge-conflicts | 5 | 32 | 27 | 0 |
-| katex-multicolumn-array-spans | 5 | 18 | 13 | 0 |
-
-Session length: 2 turns ×16 · 3×12 · 4–7×17 · ≥8×5.
+Analyze: `bash scripts/analyze_characterization_wave.sh <prefix>`.
 
 ---
 
-## Failure mode (why short traces)
+## Takeaways
 
-Typical short path: one large setup `bash` → huge tool stdout (clone / tag deletes / install) → next decode hits context.
-
-- `length`: truncated / empty / stub text (`Setup`, `Now`, …), often `output=1`.  
-- `error`: HTTP 400 — prompt already **≥8192** input tokens.
-
-So **`max_turns=8` was not the main limiter**; **`max_model_len=8192` was**. Raising turns alone without more context repeats the same wall.
-
-TCG prefix metric (same-task rollouts; call = name + canonical args): fraction of tool steps whose trajectory prefix appears in ≥2 of 5 rollouts → **15/149 = 10%**. Details: `tcg_prefix_reuse.json`.
+1. **Within-turn parallel tools ≈ 0** across all cells → Exp C surface still tiny on this setup-variant workload.
+2. **Walls moved:** A0 = context → A1 = turns/`max_tokens` → A2* = **model/task hardness** (reward still 0 with long clean traces).
+3. **thinking=high** lifts F2P on clack but **never reward=1** on 9B.
+4. **Serve:** 256K × n=5 fits **TP=2** on 2×A100-40GB; use TP=2 for later 9B waves unless you need a much larger KV pool.
+5. **TCG exact-prefix reuse** drops as traces lengthen (A0 ~10% → A1 ~0.6%) → Exp B may need softer / early-turn keys.
+6. **Next capability cell:** stronger model (~27B class; Hub id TBD). Exp B sequential TVCache can proceed in parallel (see README).
 
 ---
 
-## Ops notes (launch only)
+## Ops (shared)
 
 | Issue | Fix |
 | --- | --- |
-| Missing `OPENAI_BASE_URL` | set in `run_harbor_wave.sh` (`http://127.0.0.1:18081/v1`) |
-| Cursor reaps Harbor | Terminal.app / `screen` |
-| Mac dies, NERSC still up | `SYSML_ATTACH_JOB` + `SYSML_ATTACH_NODE` |
-| Five Slurm IDs | recycle every **2 tasks** (ops); still 10×pass@5 Harbor work |
+| Harbor Pi base URL | `OPENAI_BASE_URL=http://127.0.0.1:18081/v1` + `OPENAI_API_KEY=EMPTY` (set in `run_harbor_wave.sh`) |
+| Cursor reaps Harbor | Terminal.app / `screen`; optional `.local-smoke/*.command` |
+| Mac dies, NERSC up | `SYSML_ATTACH_JOB` + `SYSML_ATTACH_NODE` |
+| Mac Docker 2×n=5 | bind/subnet races → `TASK_PARALLEL=1` or n≤3; `SYSML_TASK_STAGGER_SEC` |
+| Knobs | `MAX_MODEL_LEN`/`CONTEXT_WINDOW` = capacity; `MAX_TOKENS` = per completion; `MAX_TURNS` = turn ceiling |
 
 ---
 
-## Next cells
+## Notes (optional detail)
 
-- **`A1` (completed):** [`workload_characterization_report_A1.md`](workload_characterization_report_A1.md) — 256 K / turns=100 / TP=4; reward 0; turn ceiling binding.
-- **`A2` pilots (completed):** [`workload_characterization_report_A2.md`](workload_characterization_report_A2.md) — longer tokens/turns, thinking=high, TP=2; still reward 0; prefer TP=2 for later 9B waves.
-
----
-
-## Artifacts
-
-`parallel_summary.json` · `tcg_prefix_reuse.json` · `manifest.json` · `run-batched.log` · `gpu-monitor.log`
+- **A0:** large setup `bash` → HTTP 400 / `length` at ≥8192; turns=8 not binding. Artifacts: `results/characterization/char-setup-10t-k5/`.
+- **A1:** ~6 h wall; 5 Slurm recycles; 49/50 sessions hit turns=100 then stub `error`; 153× mid-turn `length` at output=2048. Artifacts: `…/char-setup-10t-ctx256k-t100/`.
+- **A2c:** intended 2 Harbor tasks; only clack graded. Summary JSON: `…/char-kvpack-tp2-think-high-n10/tp2_pilot_summary.json`.

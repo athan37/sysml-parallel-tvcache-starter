@@ -1,6 +1,6 @@
 # SysML Parallel TVCache — project agent rules
 
-Teammate-facing docs: root `README.md` only. Exp A evidence write-ups: `docs/workload_characterization_report.md` (A0) · `_A1.md` · `_A2.md` (pilots). Experiments A/B/C via `bash scripts/run_experiment.sh {none|sequential|parallel|all}` (only `none` implemented today; mode picks one experiment unless `all`). Exp B sequential TVCache can proceed in parallel (stub until tvclient wired).
+Teammate-facing docs: root `README.md` only. Exp A evidence: single `docs/workload_characterization_report.md` (add a table row per new cell). Experiments A/B/C via `bash scripts/run_experiment.sh {none|sequential|parallel|all}` (only `none` implemented today; mode picks one experiment unless `all`). Exp B sequential TVCache can proceed in parallel (stub until tvclient wired).
 
 ## Deployment boundaries
 
@@ -14,7 +14,7 @@ Teammate-facing docs: root `README.md` only. Exp A evidence write-ups: `docs/wor
 - Resume a live NERSC serve with `SYSML_ATTACH_JOB` + `SYSML_ATTACH_NODE` (after `bridge_up` is defined). Do not `scancel` a READY alloc just because the Mac runner died.
 - Default wave: `SYSML_PASS_K=5`, `SYSML_HARBOR_N=5`, `SYSML_MAX_NUM_SEQS=5`, `SYSML_GPU_MEMORY_UTILIZATION=0.80`, tasks from `configs/experiment-tasks.txt` (10 setup variants). Recycle alloc every `SYSML_TASKS_PER_ALLOC` (default 2). GPU monitor: `scripts/monitor_nersc_gpu.sh` / `gpu-monitor.log`.
 - Do not confuse knobs: `SYSML_MAX_MODEL_LEN` / `SYSML_CONTEXT_WINDOW` = total prompt+history capacity; `SYSML_MAX_TOKENS` = **per-completion** generation cap; `SYSML_MAX_TURNS` = assistant **turn** ceiling (not tokens). Reward 0 + turn exhaustion ≠ “ran out of 256K context.”
-- Exp A on **Qwen3.5-9B** closed for capability: **A0+A1+A2 pilots** all reward **0** (see `docs/workload_characterization_report_A2.md`). Prefer **TP=2** at 256K; thinking=high best F2P (~7/82) still no solve. **Next capability:** stronger model (~27B / Qwen3.x — Hub id TBD). Harbor rejects bare `thinking=on` (use `high`). Mac Docker: 2×n=5 bind/subnet races → `TASK_PARALLEL=1` or n≤3; `SYSML_TASK_STAGGER_SEC` available. Prefer Terminal.app `.local-smoke/*.command` (Cursor reap → EXIT `scancel`). Historical `char-setup-9b-t8v2` was 3 tasks × n=1 — do not conflate. On OOM add GPUs / shorten len / lower seqs; on Docker bind races fall back to `N=1`. Fresh `sshproxy` required before any live wave.
+- Exp A on **Qwen3.5-9B** closed for capability: **A0–A2** all reward **0** (`docs/workload_characterization_report.md`). Prefer **TP=2** at 256K; thinking=high best F2P (~7/82) still no solve. **Next capability:** stronger model (~27B / Qwen3.x — Hub id TBD). Harbor rejects bare `thinking=on` (use `high`). Mac Docker: 2×n=5 bind/subnet races → `TASK_PARALLEL=1` or n≤3; `SYSML_TASK_STAGGER_SEC` available. Prefer Terminal.app `.local-smoke/*.command` (Cursor reap → EXIT `scancel`). Historical `char-setup-9b-t8v2` was 3 tasks × n=1 — do not conflate. On OOM add GPUs / shorten len / lower seqs; on Docker bind races fall back to `N=1`. Fresh `sshproxy` required before any live wave.
 
 ## Evidence honesty
 

@@ -76,9 +76,7 @@ Key files in order: `run_experiment.sh` → `run_harbor_wave.sh` → `nersc_serv
 README.md                 teammate entrypoint
 docs/
   project_assignment.pdf
-  workload_characterization_report.md      Exp A cell A0
-  workload_characterization_report_A1.md   Exp A cell A1 (256K / TP4)
-  workload_characterization_report_A2.md   Exp A pilots (thinking / TP2)
+  workload_characterization_report.md      Exp A cells A0–A2 (one table; extend by row)
 parallel_tvcache/         Harbor/Pi adapters, model transport, measurement, cache prototype
 variants/                 Harbor task dirs (instruction + thin image); see below
 configs/                  example.env · experiment-tasks.txt · model-gateway.Dockerfile · models/ (A0–A2 env examples)
@@ -136,7 +134,7 @@ docker build -f configs/model-gateway.Dockerfile -t sysml-model-gateway:refactor
 
 | Experiment | Mode flag | What we measure | Status |
 | --- | --- | --- | --- |
-| **A** | `none` | Parallel-turn fraction (turns with >1 tool call / all assistant turns) | **Done** — see primary cell below + `docs/workload_characterization_report.md` |
+| **A** | `none` | Parallel-turn fraction (turns with >1 tool call / all assistant turns) | **Done** — `docs/workload_characterization_report.md` (cells A0–A2) |
 | **B** | `sequential` | Sequential TVCache hit rate / tool-wait (shared TCG across concurrent pass@k) | Not wired yet |
 | **C** | `parallel` | Parallel-aware TVCache (within-turn N>1) | Not wired yet |
 
@@ -160,66 +158,29 @@ bash scripts/run_experiment.sh all          # A, then B, then C
 | Job prefix | `char-setup-10t-k5` |
 | GPU | A100-80GB · steady ~65 GiB used · **no OOM** at seqs=5 |
 | Result | **0 / 199 = 0.00%** parallel · **50/50** sessions · reward **0** all trials · bash-dominated sequential turns |
-| Write-up | `docs/workload_characterization_report.md` (**cell A0**) |
+| Write-up | **`docs/workload_characterization_report.md`** (all cells in one table) |
 | Artifacts | `results/characterization/char-setup-10t-k5/` · `jobs/char-setup-10t-k5-*/` |
 
-### Experiment A — longer-context cell A1 (2026-11-01 → 02)
-
-| Item | Value |
-| --- | --- |
-| Goal | Same 10-task pass@5 with context large enough for setup tool output |
-| Context / turns | **`max_model_len=262144`**, Pi `contextWindow=262144`, **`max_turns=100`** |
-| Concurrency | **k=n=seqs=5** |
-| GPUs | **4×A100**, vLLM **`--tensor-parallel-size 4`** (40 GB and 80 GB nodes) |
-| Env | `configs/models/qwen3.5-9b-a1-tp4-256k.env.example` |
-| Job prefix | `char-setup-10t-ctx256k-t100` |
-| Result | **4 / 4989 = 0.08%** parallel · **50/50** sessions · reward **0** all · mostly **101-turn** traces · max prompt **~99 K** · binding limit = **turn ceiling** (not 256 K) |
-| Write-up | `docs/workload_characterization_report_A1.md` (**cell A1**) |
-| Artifacts | `results/characterization/char-setup-10t-ctx256k-t100/` · `jobs/char-setup-10t-ctx256k-t100-*/` |
+Later cells (A1 256K/TP4, A2 thinking/TP2 pilots): same report table — **reward 0**, parallel ~0, **prefer TP=2** for 9B; next capability ≈27B. Env examples under `configs/models/`.
 
 ```bash
-export SYSML_NERSC_USER=<user>
-export SYSML_REMOTE_ROOT=/pscratch/sd/<letter>/<user>/sysml_parallel_tvcache
-export SYSML_SSH_HOST=perlmutter SYSML_SLURM_ACCOUNT=m4999
-set -a && source configs/models/qwen3.5-9b-a1-tp4-256k.env.example && set +a
-export DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0
-# Prefer Terminal.app / screen:
-bash scripts/run_experiment.sh none
-```
-
-If `interactive` QOS will not give 4 GPUs, set `SYSML_SLURM_QOS` to whatever your account allows for a 4-GPU node. If vLLM OOMs at start, try `SYSML_MAX_MODEL_LEN=131072` (and matching `SYSML_CONTEXT_WINDOW`) before dropping seqs.
-
-### Experiment A — A2 pilots + TP choice (2026-11-02 → 03)
-
-| Item | Value |
-| --- | --- |
-| Goal | After A1 turn/`max_tokens` wall: raise budgets, try **thinking=high**, compare **TP=4 vs TP=2** |
-| Best F2P so far (9B) | thinking=high, turns=250, tok=32K — clack avg **~7/82** F2P (TP2) / **~5.6/82** (TP4); **reward still 0** |
-| Parallel-turn | still **~0** |
-| TP verdict | **Prefer TP=2** at 256 K for later 9B waves (READY on 2×A100-40GB; KV peak ~27% at n=5) |
-| Env (TP2) | `configs/models/qwen3.5-9b-kvpack-tp2-think-high.env.example` |
-| Write-up | `docs/workload_characterization_report_A2.md` |
-| Next capability | stronger model (~27 B class) — **not blocking** Exp B start |
-
-```bash
-# Replicate TP2 thinking=high clack-style pilot (1 Harbor task × n=5):
+# A1-style (4 GPU / 256K) or TP2 pilot: source the matching configs/models/*.env.example
 export SYSML_NERSC_USER=<user>
 export SYSML_REMOTE_ROOT=/pscratch/sd/<letter>/<user>/sysml_parallel_tvcache
 export SYSML_SSH_HOST=perlmutter SYSML_SLURM_ACCOUNT=m4999
 set -a && source configs/models/qwen3.5-9b-kvpack-tp2-think-high.env.example && set +a
 export SYSML_TASK_PARALLEL=1   # Mac Docker: avoid 2×n=5 bind/subnet races
 export DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0
-# Terminal.app / screen:
-bash scripts/run_experiment.sh none
+bash scripts/run_experiment.sh none   # prefer Terminal.app / screen
 ```
 
 ### Team status / parallel work
 
 | Owner track | Status |
 | --- | --- |
-| Exp A (this README path, `none`) | **A0+A1 done**; A2 pilots done on **Qwen3.5-9B** — no reward>0; Gary tries a **stronger model later tonight** |
-| Exp B sequential TVCache | **Start anytime in parallel** — wire `tvclient` on Pi tool-execute; `run_experiment.sh sequential` is still a stub until that lands; use A0/A1/`none` artifacts + reports as the no-cache baseline |
-| Exp C | Wait for within-turn parallelism signal (still ~0 on 9B setup variants) |
+| Exp A (`none`) | Cells **A0–A2** in `docs/workload_characterization_report.md` — no reward>0 on 9B; Gary tries a **stronger model later tonight** |
+| Exp B sequential TVCache | **Start anytime in parallel** — wire `tvclient` on Pi tool-execute; `run_experiment.sh sequential` stub until that lands; use A0/A1/`none` as no-cache baseline |
+| Exp C | Wait for within-turn parallelism (still ~0 on 9B setup variants) |
 
 ### Experiment A — historical 3-task cell (2026-10-30)
 
@@ -295,6 +256,6 @@ bash scripts/analyze_characterization_wave.sh "$SYSML_JOB_PREFIX"
 ## References
 
 - Handout PDF: `docs/project_assignment.pdf`
-- Exp A reports: `docs/workload_characterization_report.md` (A0) · `_A1.md` · `_A2.md`
+- Exp A report: `docs/workload_characterization_report.md`
 - https://github.com/abhivijay96/tvcache-rust · https://github.com/abhivijay96/tvclient
 - https://github.com/harbor-framework/harbor · https://github.com/earendil-works/pi · https://github.com/datacurve-ai/deep-swe
