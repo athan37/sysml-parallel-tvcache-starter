@@ -2,7 +2,7 @@
 
 **Mode:** `none` (no TVCache) · **Model (all cells below):** `Qwen/Qwen3.5-9B` · **Reproduce:** root `README.md`  
 **Tasks:** DeepSWE setup variants under `variants/deep-swe-setup/` (`configs/experiment-tasks.txt` = 10-task list).  
-**How to extend:** add one row to **Cells** (+ optional one-line note under **Notes**). Keep raw evidence in `results/characterization/<prefix>/` and `jobs/<prefix>-*/` (gitignored).
+**How to extend:** add one row to **Cells** (+ optional one-line note under **Notes**). Published pack: `artifacts/expA-traces-A0-A2.zip` (unzip at repo root). Local full runs stay in gitignored `jobs/` / `results/`.
 
 ---
 

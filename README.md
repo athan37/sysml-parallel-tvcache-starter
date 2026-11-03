@@ -74,6 +74,8 @@ Key files in order: `run_experiment.sh` → `run_harbor_wave.sh` → `nersc_serv
 
 ```text
 README.md                 teammate entrypoint
+artifacts/
+  expA-traces-A0-A2.zip   curated Pi sessions + summaries (~5 MB; not full jobs/)
 docs/
   project_assignment.pdf
   workload_characterization_report.md      Exp A cells A0–A2 (one table; extend by row)
@@ -194,7 +196,7 @@ Earlier baseline **before** concurrent defaults: prefix `char-setup-9b-t8v2`, 3 
 
 | Goal | What to do |
 | --- | --- |
-| Re-analyze published Exp A numbers | Unzip the shared Drive traces into this repo → `bash scripts/analyze_characterization_wave.sh <prefix>` (see report for prefixes) |
+| Re-analyze published Exp A numbers | Unzip `artifacts/expA-traces-A0-A2.zip` into this repo root → `bash scripts/analyze_characterization_wave.sh <prefix>` (see report for prefixes) |
 | Re-run the same *kind* of Exp A wave | Mac **Install** above + **your own** NERSC `SYSML_REMOTE_ROOT` below (traces will not match bit-for-bit) |
 
 **`SYSML_REMOTE_ROOT` is per teammate** — use `/pscratch/sd/<first-letter-of-user>/<user>/sysml_parallel_tvcache` (or any writable pscratch dir). Do **not** hard-code someone else’s path. Harbor/Pi stay on the Mac; only vLLM + weights live under that root.
