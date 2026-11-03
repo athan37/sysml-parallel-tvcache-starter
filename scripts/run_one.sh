@@ -16,15 +16,9 @@ cmd=(harbor run -p "$TASK_PATH" -a pi -m "$MODEL" -k 1 -n 1 --env docker --jobs-
 if [[ -n "${PI_VERSION:-}" ]]; then
   cmd+=(--ak "version=$PI_VERSION")
 fi
-if [[ -n "${SYSML_MAX_TURNS:-}" ]]; then
-  cmd+=(--ak "max_turns=${SYSML_MAX_TURNS}")
-fi
-if [[ -n "${SYSML_THINKING:-}" ]]; then
-  cmd+=(--ak "thinking=${SYSML_THINKING}")
-fi
 if [[ -n "${HARBOR_MODEL_BASE_URL:-}" ]]; then
   : "${HARBOR_MODEL_API_KEY_NAME:?Set HARBOR_MODEL_API_KEY_NAME for custom endpoints}"
-  : "${HARBOR_PI_MODEL_API:?Set HARBOR_PI_MODEL_API=openai-completions for vLLM/MLX}"
+  : "${HARBOR_PI_MODEL_API:?Set HARBOR_PI_MODEL_API=openai-completions for vLLM}"
   # Harbor 0.24 resolves connection settings from provider environment variables;
   # it has no --model-base-url / --model-api-key-name CLI options.
   [[ "$MODEL" == openai/* ]] || { echo 'Custom endpoints currently require MODEL=openai/<model-id>' >&2; exit 2; }
