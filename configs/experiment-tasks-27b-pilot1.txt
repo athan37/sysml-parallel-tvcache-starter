@@ -1,0 +1,2 @@
+# Stronger-model capability pilot: one DeepSWE setup task × pass@5.
+clack-async-autocomplete-options
