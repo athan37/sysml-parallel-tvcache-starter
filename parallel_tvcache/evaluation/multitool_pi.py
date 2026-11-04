@@ -20,10 +20,12 @@ from harbor.agents.installed.pi import Pi
 from parallel_tvcache.evaluation.loopback_pi import LoopbackPi
 
 _MULTITOOL_STEERING = (
-    "Maximize parallel tool use: whenever steps are independent, emit AS MANY "
-    "tool calls as possible in the SAME assistant turn (prefer 5+ reads/searches "
-    "together). Never issue independent reads or searches one-per-turn. "
-    "Only keep dependent or mutating steps sequential across turns."
+    "Two phases: (1) Environment setup MUST be sequential — prefer one bash "
+    "with the full setup script; never parallelize clone/install with reads. "
+    "(2) Only AFTER setup succeeds, maximize parallel tool use: whenever steps "
+    "are independent, emit AS MANY tool calls as possible in the SAME turn "
+    "(prefer 5+ reads/searches together). Never issue independent reads or "
+    "searches one-per-turn. Dependent or mutating steps stay sequential."
 )
 
 

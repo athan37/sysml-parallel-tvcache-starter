@@ -26,29 +26,33 @@ from pathlib import Path
 PARALLEL_STRESS_PREAMBLE = """\
 # Parallel tool-call protocol (STRESS HARNESS — not stock DeepSWE)
 
-This variant exists only to **maximize within-turn multi-tool emission** so we
-can design and test parallel-aware TVCache. Do **not** report these parallel
-rates as natural DeepSWE + Harbor Pi characterization.
+This variant exists only to **maximize within-turn multi-tool emission after
+setup** so we can design and test parallel-aware TVCache. Do **not** report
+these parallel rates as natural DeepSWE + Harbor Pi characterization.
 
-**Primary objective for tool use:** emit **as many independent tool calls as
-possible in the same assistant turn**. Prefer large parallel fan-outs (target
-**5–10+** tool calls per explore turn) over many sequential turns with one call
-each. Pack every independent read/search you can justify into one turn.
+## Phase A — environment setup (SEQUENTIAL ONLY)
 
-Rules:
+Complete the setup section below **before any explore/solve tool calls**.
 
-1. **Default to parallel.** If two tool calls do not need each other's outputs,
-   they MUST appear in the **same** turn. Issuing independent reads/searches
-   one-per-turn is wrong for this harness.
-2. **Explore turns:** each explore turn should fan out hard — multiple `read`s
-   on different files **and** multiple independent `bash` searches
-   (`ls`/`find`/`rg`/`grep` with different paths or patterns) together.
-   Aim for the maximum number of useful independent calls you can issue at once.
-3. **Mutating / dependent steps only** (writes, installs, commits, or a command
-   that needs a prior result) may be sequential across turns. Everything else
-   stays batched in one turn.
-4. After a large parallel explore turn, you may edit/test; whenever you explore
-   again, fan out again (do not drop back to one call per turn).
+1. Do **not** parallelize setup. Dependent steps (clean `/app` → clone/pin →
+   install deps) must finish in order.
+2. Prefer **one** `bash` call that runs the full setup script block, then wait
+   for it to succeed. If you split setup, use **one tool call per turn**.
+3. **Forbidden during setup:** `read`/`grep`/`find` on project files, or any
+   multi-tool turn, until setup has clearly succeeded.
+
+## Phase B — explore / solve (PARALLEL)
+
+Only after setup succeeded:
+
+1. **Default to parallel.** Independent reads/searches MUST share one turn
+   (target **5–10+** tool calls on explore turns).
+2. Pack multiple `read`s on different files **and** independent `bash`
+   searches (`ls`/`find`/`rg`/`grep`) together.
+3. Mutating / dependent steps (edits, installs, commits, or anything that
+   needs a prior result) stay sequential across turns.
+4. Whenever you explore again, fan out again (do not drop back to one call
+   per turn for independent work).
 
 ---
 
