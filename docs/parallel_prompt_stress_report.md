@@ -98,7 +98,7 @@ Each row is **one task = one session**. **Tools/turn** is the sequence of tool-c
 3. **Still not 100% parallel turns** — and should not be: dependent edits/tests stay sequential; 0-call turns remain in the denominator.
 4. **Reward stays 0** on 4B — this measures **emission surface for Exp C**, not DeepSWE solve rate.
 5. **Do not cite forced-parallel rates as DeepSWE characterization**; cite Exp A for natural (no-append) rates.
-6. **Reproduce:** local MLX → `bash scripts/run_mlx_parallel_stress.sh`. NERSC/vLLM → `source configs/models/parallel-stress-nersc.env.example` then `bash scripts/run_experiment.sh none` (`SYSML_PARALLEL_STRESS=1` → MultitoolLoopbackPi). Generated `variants/deep-swe-parallel-stress/` is gitignored.
+6. **Reproduce:** local MLX → `bash scripts/run_mlx_parallel_stress.sh`. NERSC/vLLM → same as Exp A but `bash scripts/run_experiment.sh none --parallel-test` (MultitoolLoopbackPi). Generated `variants/deep-swe-parallel-stress/` is gitignored.
 
 ---
 
@@ -111,7 +111,7 @@ Each row is **one task = one session**. **Tools/turn** is the sequence of tool-c
 | Cursor reaps Harbor | Terminal.app / `screen` |
 | Re-analyze only | `bash scripts/analyze_characterization_wave.sh stress-mlx-maxparallel-all113` |
 | Re-run stress (MLX) | `bash scripts/run_mlx_parallel_stress.sh` |
-| Re-run stress (NERSC) | `SYSML_PARALLEL_STRESS=1 bash scripts/run_experiment.sh none` (see `configs/models/parallel-stress-nersc.env.example`) |
+| Re-run stress (NERSC) | `bash scripts/run_experiment.sh none --parallel-test` |
 
 ---
 

@@ -88,8 +88,8 @@ scripts/
   prepare_task.py             rebuild a task variant under variants/
   prepare_parallel_stress.py  prepend max-parallel instruction (stress only; not Exp A)
   run_mlx_parallel_stress.sh  local MLX forced-parallel stress wave
-  run_experiment.sh           only runner you need: mode = none|sequential|parallel|all
-  run_harbor_wave.sh          NERSC + Harbor; SYSML_PARALLEL_STRESS=1 → MultitoolLoopbackPi
+  run_experiment.sh           mode = none|sequential|parallel|all; add --parallel-test for stress
+  run_harbor_wave.sh          NERSC + Harbor (Exp A default; --parallel-test sets MultitoolLoopbackPi)
   nersc_serve_model.sbatch    vLLM on NERSC (reads SYSML_MAX_NUM_SEQS, etc.)
   monitor_nersc_gpu.sh        poll nvidia-smi on the live alloc (GPU memory)
   monitor_vllm_metrics.sh     poll vLLM /metrics (KV% / Running / Waiting) via tunnel

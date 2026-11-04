@@ -6,7 +6,10 @@
 #   bash scripts/run_experiment.sh parallel     # Experiment C only
 #   bash scripts/run_experiment.sh all          # A then B then C
 #
-# Mode may also come from SYSML_CACHE_MODE if no argument is given.
+# Forced-parallel stress (NOT Exp A characterization) — same wave, MultitoolLoopbackPi:
+#   bash scripts/run_experiment.sh none --parallel-test
+#
+# Mode may also come from SYSML_CACHE_MODE if no mode argument is given.
 # Same Harbor/NERSC wave for every mode; only the cache flag differs.
 # Wave defaults: SYSML_PASS_K=SYSML_HARBOR_N=SYSML_MAX_NUM_SEQS=5 (concurrent rollouts).
 # Today only "none" is wired (no tvclient on the tool path yet).
@@ -14,7 +17,42 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-MODE="${1:-${SYSML_CACHE_MODE:-none}}"
+MODE=""
+PARALLEL_TEST=0
+for arg in "$@"; do
+  case "$arg" in
+    --parallel-test|--parallel-stress)
+      PARALLEL_TEST=1
+      ;;
+    -h|--help)
+      cat <<EOF
+Usage: bash scripts/run_experiment.sh {none|sequential|parallel|all} [--parallel-test]
+
+  none|sequential|parallel|all   Exp A/B/C cache mode (only none wired today)
+  --parallel-test                Forced multi-tool stress (MultitoolLoopbackPi +
+                                 stress task list). NOT natural characterization.
+EOF
+      exit 0
+      ;;
+    -*)
+      echo "Unknown flag: $arg (try --parallel-test)" >&2
+      exit 2
+      ;;
+    *)
+      if [[ -n "$MODE" ]]; then
+        echo "Unexpected extra argument: $arg" >&2
+        exit 2
+      fi
+      MODE="$arg"
+      ;;
+  esac
+done
+MODE="${MODE:-${SYSML_CACHE_MODE:-none}}"
+
+if [[ "$PARALLEL_TEST" == "1" ]]; then
+  export SYSML_PARALLEL_STRESS=1
+  echo "parallel-test: SYSML_PARALLEL_STRESS=1 (MultitoolLoopbackPi; not Exp A natural rates)"
+fi
 
 run_mode() {
   local m="$1"
@@ -51,7 +89,7 @@ case "$MODE" in
     run_mode "$MODE"
     ;;
   *)
-    echo "Usage: bash scripts/run_experiment.sh {none|sequential|parallel|all}" >&2
+    echo "Usage: bash scripts/run_experiment.sh {none|sequential|parallel|all} [--parallel-test]" >&2
     exit 2
     ;;
 esac
