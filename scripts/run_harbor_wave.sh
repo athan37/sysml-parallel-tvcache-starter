@@ -5,6 +5,8 @@
 # Defaults = proven A0 cell (1 GPU, 8K, max_turns=8, k=n=seqs=5).
 # A1 (4 GPU TP, 256K, max_turns=100): source configs/models/qwen3.5-9b-a1-tp4-256k.env.example
 # Task ids: configs/experiment-tasks.txt (override with SYSML_TASK_LIST).
+# Forced-parallel stress on NERSC (not Exp A): SYSML_PARALLEL_STRESS=1
+#   → MultitoolLoopbackPi + configs/experiment-tasks-parallel-stress.txt
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -19,6 +21,8 @@ export PI_VERSION="${PI_VERSION:-1.4.0}"
 export SYSML_MAX_TOKENS="${SYSML_MAX_TOKENS:-2048}"
 CACHE_MODE="${SYSML_CACHE_MODE:-none}"
 PREFIX="${SYSML_JOB_PREFIX:-char-setup-10t-k5}"
+# Default Exp A agent; override with SYSML_AGENT or SYSML_PARALLEL_STRESS=1.
+AGENT="${SYSML_AGENT:-parallel_tvcache.evaluation.loopback_pi:LoopbackPi}"
 LOCAL_PORT="${SYSML_TUNNEL_LOCAL_PORT:-18086}"
 K="${SYSML_PASS_K:-5}"
 N="${SYSML_HARBOR_N:-$K}"
@@ -72,6 +76,13 @@ else
 fi
 TASK_ROOT="${SYSML_TASK_ROOT:-$ROOT/variants/deep-swe-setup/tasks}"
 TASK_LIST="${SYSML_TASK_LIST:-$ROOT/configs/experiment-tasks.txt}"
+if [[ "${SYSML_PARALLEL_STRESS:-0}" == "1" ]]; then
+  # Forced-parallel stress on the NERSC/vLLM path (not characterization).
+  AGENT="${SYSML_AGENT:-parallel_tvcache.evaluation.multitool_pi:MultitoolLoopbackPi}"
+  TASK_ROOT="${SYSML_TASK_ROOT:-$ROOT/variants/deep-swe-parallel-stress/tasks}"
+  TASK_LIST="${SYSML_TASK_LIST:-$ROOT/configs/experiment-tasks-parallel-stress.txt}"
+  PREFIX="${SYSML_JOB_PREFIX:-stress-nersc-parallel}"
+fi
 WAVE_DIR="results/characterization/${PREFIX}"
 LOG="$WAVE_DIR/run-batched.log"
 REMOTE_ROOT="${SYSML_REMOTE_ROOT:?Set SYSML_REMOTE_ROOT (e.g. /pscratch/sd/<letter>/<user>/sysml_parallel_tvcache)}"
@@ -95,12 +106,22 @@ load_tasks() {
 }
 
 load_tasks
-echo "PREFIX=$PREFIX K=$K N=$N MAX_NUM_SEQS=$MAX_NUM_SEQS MAX_LEN=$MAX_LEN CTX=$SYSML_CONTEXT_WINDOW TURNS=$SYSML_MAX_TURNS THINKING=$SYSML_THINKING GPU_MEM=$GPU_MEM GPUS=$GPUS TP=$TP_SIZE MEM=$MEM CPUS=$CPUS_PER_TASK QOS=$SLURM_QOS MODE=$CACHE_MODE tasks=${#tasks[@]} per_alloc=$TASKS_PER_ALLOC task_parallel=$TASK_PARALLEL" | tee -a "$LOG"
-echo "REMOTE_ROOT=$REMOTE_ROOT NERSC_USER=$NERSC_USER SSH_HOST=$SSH_HOST ACCOUNT=$SLURM_ACCOUNT TASK_LIST=$TASK_LIST" | tee -a "$LOG"
+
+if [[ "${SYSML_PARALLEL_STRESS:-0}" == "1" && "${SYSML_PREPARE:-1}" == "1" ]]; then
+  echo "=== prepare parallel-stress variants → $TASK_ROOT ===" | tee -a "$LOG"
+  python3 "$ROOT/scripts/prepare_parallel_stress.py" \
+    --source "${SYSML_PREPARE_SOURCE:-$ROOT/variants/deep-swe-setup/tasks}" \
+    --task-list "$TASK_LIST" \
+    --destination "$TASK_ROOT" \
+    --force | tee -a "$LOG"
+fi
+
+echo "PREFIX=$PREFIX AGENT=$AGENT K=$K N=$N MAX_NUM_SEQS=$MAX_NUM_SEQS MAX_LEN=$MAX_LEN CTX=$SYSML_CONTEXT_WINDOW TURNS=$SYSML_MAX_TURNS THINKING=$SYSML_THINKING GPU_MEM=$GPU_MEM GPUS=$GPUS TP=$TP_SIZE MEM=$MEM CPUS=$CPUS_PER_TASK QOS=$SLURM_QOS MODE=$CACHE_MODE tasks=${#tasks[@]} per_alloc=$TASKS_PER_ALLOC task_parallel=$TASK_PARALLEL" | tee -a "$LOG"
+echo "REMOTE_ROOT=$REMOTE_ROOT NERSC_USER=$NERSC_USER SSH_HOST=$SSH_HOST ACCOUNT=$SLURM_ACCOUNT TASK_LIST=$TASK_LIST TASK_ROOT=$TASK_ROOT" | tee -a "$LOG"
 
 for task in "${tasks[@]}"; do
   [[ -f "$TASK_ROOT/$task/task.toml" ]] || {
-    echo "Missing setup variant: $TASK_ROOT/$task (run scripts/prepare_task.py --setup-as-agent-actions)" >&2
+    echo "Missing task: $TASK_ROOT/$task (prepare_task.py --setup-as-agent-actions, or SYSML_PREPARE=1 with SYSML_PARALLEL_STRESS=1)" >&2
     exit 2
   }
 done
@@ -285,7 +306,7 @@ run_task() {
   echo "=== $job_name  (k=$K n=$N) ===" | tee -a "$LOG"
   PYTHONPATH="$ROOT" harbor run \
     -p "$TASK_ROOT/$task" \
-    -a parallel_tvcache.evaluation.loopback_pi:LoopbackPi \
+    -a "$AGENT" \
     -m "$MODEL" \
     --ak "version=${PI_VERSION}" \
     --ak model_api=openai-completions \
