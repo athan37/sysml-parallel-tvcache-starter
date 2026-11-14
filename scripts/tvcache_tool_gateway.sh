@@ -30,10 +30,12 @@ daemonize_gateway() {
     echo $! >"$PID_FILE"
     return 0
   fi
-  "$PY" - "$PID_FILE" "$LOG_FILE" "$SOCK" "$LISTEN_HOST" "$LISTEN_PORT" <<'PY'
+  # Stay in $ROOT (writable). chdir("/") breaks tvclient set_rollout_id → ./rollouts
+  # on macOS sealed system volume (Errno 30 Read-only file system).
+  "$PY" - "$PID_FILE" "$LOG_FILE" "$SOCK" "$LISTEN_HOST" "$LISTEN_PORT" "$ROOT" <<'PY'
 import os, sys
 
-pid_file, log_file, sock, host, port = sys.argv[1:6]
+pid_file, log_file, sock, host, port, root = sys.argv[1:7]
 py = sys.executable
 args = [
     py, "-m", "parallel_tvcache.cache.tool_gateway",
@@ -44,7 +46,7 @@ if os.fork() > 0:
 os.setsid()
 if os.fork() > 0:
     sys.exit(0)
-os.chdir("/")
+os.chdir(root)
 fd = os.open(log_file, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
 os.dup2(fd, 1)
 os.dup2(fd, 2)

@@ -153,20 +153,20 @@ bash scripts/tvcache_tool_gateway.sh stop
 bash scripts/tvcache_server.sh stop
 ```
 
-## Project status — 2026-11-05
+## Project status — 2026-11-13
 
 | Experiment | Mode flag | What we measure | Status |
 | --- | --- | --- | --- |
 | **A** | `none` | Reward; parallel-turn fraction; cross-rollout TCG prefix | **Harbor + Pi** throughout (except B1 Mini-SWE). DeepSWE tasks ×9B/27B: reward 0 (task hard). **Pipeline proven** on **TMax** short tasks ×27B×Pi: **T1 5/5**, **T2 40/40** reward 1.0 on 8 valid tasks — `docs/workload_characterization_report.md` |
 | **B** | `sequential` | Sequential TVCache hit rate / tool-wait (shared TCG across concurrent pass@k) | **Matched TMax-8 done** (2026-11-05): prefix `tmax-qwen38-27b-easy8-tvcache-seq-t100-xh` — **40/40** reward 1.0 · call hit **9.0%** · turn hit **8.7%** · tool-wait saved **−5.2%** (outlier slow hit). TCP gateway + `/home/user`. |
-| **C** | `parallel` | Parallel-aware TVCache (within-turn N>1) | Natural parallel >0 on 27B×Pi (DeepSWE-tasks ~5%, TMax ~15–24%); forced Multitool stress separate (`docs/parallel_prompt_stress_report.md`) |
+| **C** | `parallel` | Parallel-aware TVCache — **Design A** (per-call HIT/WAIT/EXECUTE) | **Matched TMax-8 done** (2026-11-13): prefix `tmax-qwen38-27b-easy8-tvcache-desA-t100-xh` — **pass@5 8/8** · call hit **9.5%** · turn hit **10.2%** · tool-wait saved **+0.5%** · 1× `inflight` WAIT. Design B/C later. |
 
 One runner; pick the mode you want (A-only, B-only, C-only, or `all`). It does **not** re-run other modes unless you pass `all`.
 
 ```bash
 bash scripts/run_experiment.sh none         # Experiment A only
 bash scripts/run_experiment.sh sequential   # Experiment B (TVCache sequential)
-bash scripts/run_experiment.sh parallel     # Experiment C only (stub today)
+bash scripts/run_experiment.sh parallel     # Experiment C — Design A TVCache
 bash scripts/run_experiment.sh all          # A, then B, then C
 ```
 
@@ -182,6 +182,16 @@ bash scripts/run_experiment.sh sequential
 #   results/characterization/$SYSML_JOB_PREFIX/tvcache-summary.json
 python scripts/analyze_tvcache_metrics.py results/characterization/$SYSML_JOB_PREFIX/tvcache-metrics.jsonl
 # → per_call_hit_rate, per_turn_hit_rate (from jobs/ Pi sessions), tool_wait_saved_rate
+```
+
+**Exp C Design A run (matched contract):**
+
+```bash
+set -a && source configs/models/qwen3.8-27b-tmax-easy8-tvcache-desA.env.example && set +a
+export SYSML_NERSC_USER=<user>
+export SYSML_REMOTE_ROOT=/pscratch/sd/<letter>/<user>/sysml_parallel_tvcache
+bash scripts/run_experiment.sh parallel
+# → results/characterization/tmax-qwen38-27b-easy8-tvcache-desA-t100-xh/{tvcache-metrics.jsonl,tvcache-summary.json}
 ```
 
 ### Handout tables (filled from T2 where possible)
@@ -236,12 +246,14 @@ CDF = fraction of assistant turns with **at most** *k* model-emitted tool calls 
 | --- | ---: | ---: | ---: | ---: | ---: |
 | **No cache reuse** (Exp A `none`, matched contract above) | N/A | N/A | **0** (reference) | **8/8 (100%)** | **8/8 (100%)** |
 | Existing single-call TVCache (Exp B) | **9.0%** | **8.7%** | **−5.2%** | **8/8 (100%)** | **8/8 (100%)** |
-| Parallel-aware TVCache (Exp C) | TBD | TBD | TBD | TBD | TBD |
+| Parallel-aware TVCache (Exp C Design A) | **9.5%** | **10.2%** | **+0.5%** | **8/8 (100%)** | **8/8 (100%)** |
 
 **pass@5 (no-cache T2 / Exp B):** task solved if any of the 5 concurrent trials has verifier reward 1.0 → **8/8** (all 40 graded trials reward 1.0).  
 **pass@1:** first trial per task among the k=5 batch → also **8/8** (no-cache T2 and Exp B).
 
-**Exp B matched TMax-8 (2026-11-05):** prefix `tmax-qwen38-27b-easy8-tvcache-seq-t100-xh` · env `configs/models/qwen3.8-27b-tmax-easy8-tvcache-seq.env.example` · agent `TvcacheLoopbackPi`. **40/40** reward 1.0. Metrics (`tvcache-metrics.jsonl` / `tvcache-summary.json`): **256** tool calls · **23** hits · **233** misses → **9.0%** per-call · **8.7%** per-turn (18/208 tool-turns with ≥1 hit) · tool-wait saved **−5.2%** vs typical-miss counterfactual (median clean miss ≈0.27s; one pathological ~76s “hit” dominates — without outliers, hits are ~1ms). Transport: Pi → TCP `host.docker.internal:17878` → Mac tool gateway → `tvcache-rust` (Docker Desktop cannot use Mac-host AF_UNIX bind mounts). Sandbox `docker exec -w /home/user`. Earlier 3-task pilot (~16% hit) was warm-up only. Exp C still stub.
+**Exp B matched TMax-8 (2026-11-05):** prefix `tmax-qwen38-27b-easy8-tvcache-seq-t100-xh` · env `configs/models/qwen3.8-27b-tmax-easy8-tvcache-seq.env.example` · agent `TvcacheLoopbackPi`. **40/40** reward 1.0. Metrics (`tvcache-metrics.jsonl` / `tvcache-summary.json`): **256** tool calls · **23** hits · **233** misses → **9.0%** per-call · **8.7%** per-turn (18/208 tool-turns with ≥1 hit) · tool-wait saved **−5.2%** vs typical-miss counterfactual (median clean miss ≈0.27s; one pathological ~76s “hit” dominates — without outliers, hits are ~1ms). Transport: Pi → TCP `host.docker.internal:17878` → Mac tool gateway → `tvcache-rust` (Docker Desktop cannot use Mac-host AF_UNIX bind mounts). Sandbox `docker exec -w /home/user`. Earlier 3-task pilot (~16% hit) was warm-up only.
+
+**Exp C Design A matched TMax-8 (2026-11-13):** prefix `tmax-qwen38-27b-easy8-tvcache-desA-t100-xh` · env `configs/models/qwen3.8-27b-tmax-easy8-tvcache-desA.env.example` · `SYSML_TVCACHE_DESIGN=A` · agent `TvcacheLoopbackPi`. **pass@5 / pass@1 = 8/8**; graded trials **39/40** reward 1.0 (one `AgentTimeoutError` on `task_004783` retry after gateway cwd fix). Metrics (`tvcache-metrics.jsonl` / `tvcache-summary.json`): **252** tool calls · **24** reuse hits (incl. **1** `inflight` WAIT) · **228** misses → **9.5%** per-call · **10.2%** per-turn (21/206 tool-turns) · tool-wait saved **+0.5%**. Poster: `docs/tvcache-midpoint-poster-v42.pptx`. Note: first attempt at `task_004783` failed when macOS gateway daemon `chdir("/")` broke `tvclient` `./rollouts` mkdir — fixed in `tvcache_tool_gateway.sh` (`chdir($ROOT)`); task re-run appended to same wave metrics.
 
 ### Experiment A — primary completed cell (2026-11-01)
 

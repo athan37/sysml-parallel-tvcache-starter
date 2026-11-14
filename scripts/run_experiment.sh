@@ -3,7 +3,7 @@
 #
 #   bash scripts/run_experiment.sh none         # Experiment A only
 #   bash scripts/run_experiment.sh sequential   # Experiment B (TVCache sequential)
-#   bash scripts/run_experiment.sh parallel     # Experiment C only (stub)
+#   bash scripts/run_experiment.sh parallel     # Experiment C — Design A TVCache
 #   bash scripts/run_experiment.sh all          # A then B then C
 #
 # Forced-parallel stress (NOT Exp A characterization) — same wave, MultitoolLoopbackPi:
@@ -29,7 +29,7 @@ Usage: bash scripts/run_experiment.sh {none|sequential|parallel|all} [--parallel
 
   none         Experiment A (no TVCache)
   sequential   Experiment B — paper TVCache via tool gateway + TvcacheLoopbackPi
-  parallel     Experiment C (stub until parallel-aware cache)
+  parallel     Experiment C — Design A (per-call HIT/WAIT/EXECUTE) + TvcacheLoopbackPi
   all          A, then B, then C
   --parallel-test   Forced multi-tool stress (MultitoolLoopbackPi). NOT natural Exp A.
 EOF
@@ -59,15 +59,12 @@ run_mode() {
   local m="$1"
   export SYSML_CACHE_MODE="$m"
   case "$m" in
-    none|sequential)
+    none|sequential|parallel)
+      if [[ "$m" == "parallel" ]]; then
+        export SYSML_TVCACHE_DESIGN="${SYSML_TVCACHE_DESIGN:-A}"
+        echo "parallel: SYSML_TVCACHE_DESIGN=$SYSML_TVCACHE_DESIGN (Design A)"
+      fi
       bash scripts/run_harbor_wave.sh
-      ;;
-    parallel)
-      cat >&2 <<EOF
-SYSML_CACHE_MODE=parallel is not wired yet (Exp C parallel-aware TVCache).
-Re-run with: bash scripts/run_experiment.sh sequential
-EOF
-      return 3
       ;;
     *)
       echo "Unknown mode: $m (use none|sequential|parallel|all)" >&2

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Shared Harbor + NERSC wave (setup variants × pass@k with concurrency n).
-# Called by run_experiment.sh. SYSML_CACHE_MODE=none|sequential (parallel still stub).
+# Called by run_experiment.sh. SYSML_CACHE_MODE=none|sequential|parallel.
+# parallel = Exp C Design A (SYSML_TVCACHE_DESIGN=A) via same TvcacheLoopbackPi stack.
 #
 # Defaults = proven A0 cell (1 GPU, 8K, max_turns=8, k=n=seqs=5).
 # A1 (4 GPU TP, 256K, max_turns=100): source configs/models/qwen3.5-9b-a1-tp4-256k.env.example
@@ -29,6 +30,11 @@ case "$HARBOR_AGENT" in
     ;;
 esac
 CACHE_MODE="${SYSML_CACHE_MODE:-none}"
+# sequential (Exp B) or parallel/Design A (Exp C) both use paper TVCache + gateway.
+TVCACHE_ON=0
+case "$CACHE_MODE" in
+  sequential|parallel) TVCACHE_ON=1 ;;
+esac
 PREFIX="${SYSML_JOB_PREFIX:-char-setup-10t-k5}"
 # Default Exp A agent; override with SYSML_AGENT or SYSML_PARALLEL_STRESS=1.
 AGENT="${SYSML_AGENT:-parallel_tvcache.evaluation.loopback_pi:LoopbackPi}"
@@ -100,7 +106,7 @@ if [[ "${SYSML_PARALLEL_STRESS:-0}" == "1" ]]; then
   TASK_LIST="${SYSML_TASK_LIST:-$ROOT/configs/experiment-tasks-parallel-stress.txt}"
   PREFIX="${SYSML_JOB_PREFIX:-stress-nersc-parallel}"
 fi
-if [[ "$CACHE_MODE" == "sequential" ]]; then
+if [[ "$TVCACHE_ON" == "1" ]]; then
   AGENT="${SYSML_AGENT:-parallel_tvcache.evaluation.tvcache_pi:TvcacheLoopbackPi}"
   export SYSML_TVCACHE_DIR="${SYSML_TVCACHE_DIR:-$ROOT/results/tvcache}"
   export SYSML_TVCACHE_SOCK="${SYSML_TVCACHE_SOCK:-$SYSML_TVCACHE_DIR/tvcache.sock}"
@@ -109,10 +115,14 @@ if [[ "$CACHE_MODE" == "sequential" ]]; then
   # Pi↔gateway: TCP (Docker Desktop cannot use Mac-host AF_UNIX bind mounts).
   export SYSML_TVCACHE_GATEWAY_HOST="${SYSML_TVCACHE_GATEWAY_HOST:-127.0.0.1}"
   export SYSML_TVCACHE_GATEWAY_PORT="${SYSML_TVCACHE_GATEWAY_PORT:-17878}"
+  if [[ "$CACHE_MODE" == "parallel" ]]; then
+    export SYSML_TVCACHE_DESIGN="${SYSML_TVCACHE_DESIGN:-A}"
+    PREFIX="${SYSML_JOB_PREFIX:-tmax-qwen38-27b-easy8-tvcache-desA-t100-xh}"
+  fi
 fi
 WAVE_DIR="results/characterization/${PREFIX}"
 LOG="$WAVE_DIR/run-batched.log"
-if [[ "$CACHE_MODE" == "sequential" ]]; then
+if [[ "$TVCACHE_ON" == "1" ]]; then
   export SYSML_TVCACHE_METRICS="${SYSML_TVCACHE_METRICS:-$WAVE_DIR/tvcache-metrics.jsonl}"
 fi
 REMOTE_ROOT="${SYSML_REMOTE_ROOT:?Set SYSML_REMOTE_ROOT (e.g. /pscratch/sd/<letter>/<user>/sysml_parallel_tvcache)}"
@@ -156,8 +166,8 @@ echo "REMOTE_ROOT=$REMOTE_ROOT NERSC_USER=$NERSC_USER SSH_HOST=$SSH_HOST ACCOUNT
 
 # Bring TVCache up before the long NERSC serve wait so ensure_tvcache is a no-op
 # after READY (avoids cold-import races killing the alloc via set -e + EXIT trap).
-if [[ "$CACHE_MODE" == "sequential" ]]; then
-  echo "=== TVCache early start (before serve) ===" | tee -a "$LOG"
+if [[ "$TVCACHE_ON" == "1" ]]; then
+  echo "=== TVCache early start (before serve; mode=$CACHE_MODE design=${SYSML_TVCACHE_DESIGN:-}) ===" | tee -a "$LOG"
   bash "$ROOT/scripts/tvcache_server.sh" start | tee -a "$LOG"
   bash "$ROOT/scripts/tvcache_tool_gateway.sh" start | tee -a "$LOG"
 fi
@@ -353,7 +363,7 @@ teardown_serve() {
 }
 
 teardown_tvcache() {
-  if [[ "$CACHE_MODE" == "sequential" ]]; then
+  if [[ "$TVCACHE_ON" == "1" ]]; then
     bash "$ROOT/scripts/tvcache_tool_gateway.sh" stop 2>/dev/null || true
     bash "$ROOT/scripts/tvcache_server.sh" stop 2>/dev/null || true
   fi
@@ -413,10 +423,10 @@ run_task() {
 }
 
 ensure_tvcache() {
-  if [[ "$CACHE_MODE" != "sequential" ]]; then
+  if [[ "$TVCACHE_ON" != "1" ]]; then
     return 0
   fi
-  echo "=== TVCache sequential: server + tool gateway ===" | tee -a "$LOG"
+  echo "=== TVCache ($CACHE_MODE design=${SYSML_TVCACHE_DESIGN:-}): server + tool gateway ===" | tee -a "$LOG"
   bash "$ROOT/scripts/tvcache_server.sh" start | tee -a "$LOG"
   bash "$ROOT/scripts/tvcache_tool_gateway.sh" start | tee -a "$LOG"
 }
@@ -524,7 +534,7 @@ done
 teardown_serve || true
 trap - EXIT
 echo "DONE wave under prefix $PREFIX (k=$K n=$N max_num_seqs=$MAX_NUM_SEQS max_len=$MAX_LEN turns=$SYSML_MAX_TURNS thinking=$SYSML_THINKING gpus=$GPUS tp=$TP_SIZE task_parallel=$TASK_PARALLEL tasks=${#need[@]})" | tee -a "$LOG"
-if [[ "$CACHE_MODE" == "sequential" ]]; then
+if [[ "$TVCACHE_ON" == "1" ]]; then
   _tm="${SYSML_TVCACHE_METRICS:-$WAVE_DIR/tvcache-metrics.jsonl}"
   if [[ -f "$_tm" ]]; then
     echo "=== TVCache Table 2 summary (call/turn hit + tool-wait saved) ===" | tee -a "$LOG"

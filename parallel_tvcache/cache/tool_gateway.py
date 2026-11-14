@@ -4,6 +4,10 @@ Pi extensions inside Docker Desktop Linux VMs cannot use a Mac-host AF_UNIX
 socket (bind-mount shows the inode but connect is ECONNREFUSED). Agents RPC
 over TCP to ``host.docker.internal:SYSML_TVCACHE_GATEWAY_PORT`` (default 17878).
 Optional Unix listen remains for host-local smoke tests.
+
+``SYSML_TVCACHE_DESIGN=A`` (default when ``SYSML_CACHE_MODE=parallel``): Design A
+readonly path — per-call HIT / WAIT (inflight) / EXECUTE with one owner.
+Mutating calls stay sequential under a per-task lock. Stock tvcache-rust only.
 """
 
 from __future__ import annotations
@@ -23,10 +27,27 @@ from tvclient.executor import TvcacheToolExecutor
 
 from parallel_tvcache.cache.context import live_container_var, rollout_id_var, task_id_var
 from parallel_tvcache.cache.harbor_docker_sandbox import HarborDockerSandbox
+from parallel_tvcache.cache.inflight import InflightCoordinator
 from parallel_tvcache.cache.metrics import log_metric
 from parallel_tvcache.cache.pi_tool_call import PiToolCall
 
 LOG = logging.getLogger("sysml.tvcache.gateway")
+
+
+def _resolve_design() -> str:
+    raw = os.environ.get("SYSML_TVCACHE_DESIGN", "").strip().upper()
+    if raw:
+        return raw
+    if os.environ.get("SYSML_CACHE_MODE", "").strip().lower() == "parallel":
+        return "A"
+    return ""
+
+
+def _cache_path(task_id: str, history: list[PiToolCall]) -> tuple[str, ...]:
+    """Durable TCG path: task + stateful prefix + current call (same as tvclient)."""
+    prev, current = history[:-1], history[-1]
+    stateful = [c for c in prev if c.will_mutate_state()]
+    return (task_id, *(c.serialize() for c in stateful), current.serialize())
 
 
 async def _resolve_container_id(ref: str) -> str:
@@ -70,6 +91,7 @@ class ToolGateway:
         sock_path: str | None = None,
         listen_host: str = "127.0.0.1",
         listen_port: int = 17878,
+        design: str | None = None,
     ):
         self.host = host
         self.port = port
@@ -77,11 +99,21 @@ class ToolGateway:
         self.listen_port = listen_port
         raw_sock = sock_path if sock_path is not None else os.environ.get("SYSML_TVCACHE_SOCK")
         self.sock_path = Path(raw_sock) if raw_sock else None
+        self.design = (design if design is not None else _resolve_design()).upper()
         self._sessions: dict[tuple[str, str], RolloutSession] = {}
         self._lock = asyncio.Lock()
-        # tvcache-rust client protocol is easy to desync under multi-conn races;
-        # serialize all cache RPCs for smoke/baseline correctness.
+        # Sequential mode: serialize all cache RPCs for smoke/baseline correctness.
         self._tv_lock = asyncio.Lock()
+        # Design A: cross-rollout WAIT/EXECUTE ownership for readonly keys.
+        self._inflight = InflightCoordinator()
+        self._mutate_locks: dict[str, asyncio.Lock] = {}
+
+    def _mutate_lock(self, task_id: str) -> asyncio.Lock:
+        lock = self._mutate_locks.get(task_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._mutate_locks[task_id] = lock
+        return lock
 
     async def get_session(
         self, task_id: str, rollout_id: str, container_id: str
@@ -103,7 +135,13 @@ class ToolGateway:
                 port=self.port,
             )
             await ex.client.connect()
-            ex.set_rollout_id(rollout_id)
+            try:
+                ex.set_rollout_id(rollout_id)
+            except OSError as exc:
+                # tvclient always mkdir("./rollouts"); tolerate read-only cwd.
+                LOG.warning("set_rollout_id skipped (%s); using logger only", exc)
+                ex.rollout_id = rollout_id
+                ex.logger = logging.getLogger(rollout_id)
         finally:
             live_container_var.reset(token)
         sess = RolloutSession(
@@ -126,6 +164,66 @@ class ToolGateway:
             self._sessions[key] = sess
             return sess
 
+    async def _lookup_sequential(
+        self, sess: RolloutSession, call: PiToolCall
+    ) -> tuple[str, str]:
+        """Existing Exp B path: one call at a time under global + session locks."""
+        async with sess.lock, self._tv_lock:
+            sess.history.append(call)
+            before_exec = sess.executor.total_executions
+            result = await sess.executor.lookup_or_execute(list(sess.history))
+            source = "hit" if sess.executor.total_executions == before_exec else "miss"
+            return result, source
+
+    async def _lookup_design_a(
+        self, sess: RolloutSession, call: PiToolCall
+    ) -> tuple[str, str]:
+        """Design A: readonly HIT/WAIT/EXECUTE; mutating calls ordered per task."""
+        if call.will_mutate_state():
+            async with self._mutate_lock(sess.task_id), sess.lock:
+                sess.history.append(call)
+                before_exec = sess.executor.total_executions
+                result = await sess.executor.lookup_or_execute(list(sess.history))
+                source = (
+                    "hit" if sess.executor.total_executions == before_exec else "miss"
+                )
+                return result, source
+
+        async with sess.lock:
+            sess.history.append(call)
+            history = list(sess.history)
+
+        key = _cache_path(sess.task_id, history)
+
+        # Durable peek (no execute). Release lease immediately after read.
+        async with sess.lock:
+            found = await sess.executor.client.find(
+                sess.executor.task_name,
+                list(key[1:]),
+            )
+            async with found:
+                if found.value is not None:
+                    sess.executor.total_calls += 1
+                    return found.value, "hit"
+
+        leader, fut = await self._inflight.claim(key)
+        if not leader:
+            value = await fut
+            return value, "inflight"
+
+        try:
+            async with sess.lock:
+                before_exec = sess.executor.total_executions
+                result = await sess.executor.lookup_or_execute(history)
+                source = (
+                    "hit" if sess.executor.total_executions == before_exec else "miss"
+                )
+            await self._inflight.complete(key, fut, result)
+            return result, source
+        except BaseException as exc:
+            await self._inflight.fail(key, fut, exc)
+            raise
+
     async def handle_tool(self, req: dict[str, Any]) -> dict[str, Any]:
         task_id = str(req.get("task_id") or "unknown-task")
         rollout_id = str(req.get("rollout_id") or "unknown-rollout")
@@ -140,13 +238,11 @@ class ToolGateway:
         token_r = rollout_id_var.set(rollout_id)
         t0 = time.perf_counter()
         try:
-            async with sess.lock, self._tv_lock:
-                sess.history.append(call)
-                # Hit ⇒ lookup_or_execute returns without sandbox execute.
-                before_exec = sess.executor.total_executions
-                result = await sess.executor.lookup_or_execute(list(sess.history))
-                elapsed = time.perf_counter() - t0
-                source = "hit" if sess.executor.total_executions == before_exec else "miss"
+            if self.design == "A":
+                result, source = await self._lookup_design_a(sess, call)
+            else:
+                result, source = await self._lookup_sequential(sess, call)
+            elapsed = time.perf_counter() - t0
             log_metric(
                 {
                     "event": "tool",
@@ -156,6 +252,7 @@ class ToolGateway:
                     "source": source,
                     "elapsed_s": elapsed,
                     "mutates": call.will_mutate_state(),
+                    "design": self.design or "sequential",
                 }
             )
             return {
@@ -173,6 +270,7 @@ class ToolGateway:
                     "rollout_id": rollout_id,
                     "tool": name,
                     "error": str(exc),
+                    "design": self.design or "sequential",
                 }
             )
             return {"ok": False, "error": str(exc), "output": f"Failed to execute: {exc}"}
@@ -218,7 +316,11 @@ async def _handle_client(
                 )
                 resp = {"ok": True}
             elif op == "ping":
-                resp = {"ok": True, "pong": True}
+                resp = {
+                    "ok": True,
+                    "pong": True,
+                    "design": gateway.design or "sequential",
+                }
             else:
                 resp = {"ok": False, "error": f"unknown op {op}"}
             writer.write((json.dumps(resp) + "\n").encode())
@@ -238,9 +340,10 @@ async def serve_forever(gateway: ToolGateway) -> None:
     tcp = await asyncio.start_server(handler, gateway.listen_host, gateway.listen_port)
     servers.append(tcp)
     LOG.info(
-        "tool gateway listening on tcp://%s:%s",
+        "tool gateway listening on tcp://%s:%s design=%s",
         gateway.listen_host,
         gateway.listen_port,
+        gateway.design or "sequential",
     )
 
     if gateway.sock_path is not None:

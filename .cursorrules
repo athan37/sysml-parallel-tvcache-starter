@@ -1,6 +1,14 @@
 # SysML Parallel TVCache — project agent rules
 
-Teammate-facing docs: root `README.md` only. Exp A evidence: single `docs/workload_characterization_report.md` (add a table row per new cell). Experiments A/B/C via `bash scripts/run_experiment.sh {none|sequential|parallel|all}` (`none` + `sequential` wired; `parallel` still stub). Mode picks one experiment unless `all`.
+Teammate-facing docs: root `README.md` only. Exp A evidence: single `docs/workload_characterization_report.md` (add a table row per new cell). Experiments A/B/C via `bash scripts/run_experiment.sh {none|sequential|parallel|all}` (`none` + `sequential` + **`parallel`=Design A** wired). Mode picks one experiment unless `all`.
+
+## Parallel TVCache designs (do not confuse with Exp A/B/C)
+
+Source: `docs/tvcache-midpoint-poster-v42.pptx`. **Exp** A/B/C = experiment modes (`none` / `sequential` / `parallel`). **Design** A/B/C = parallel-aware cache schemes for Exp C.
+
+- **Design A — batch tree + per-call reuse (SHIPPED in gateway):** Mac `tool_gateway.py` + `InflightCoordinator`; stock rust find/insert. `SYSML_CACHE_MODE=parallel` → `SYSML_TVCACHE_DESIGN=A`. Readonly: HIT / WAIT(`inflight`) / EXECUTE; mutating: per-task ordered sequential. Env: `configs/models/qwen3.8-27b-tmax-easy8-tvcache-desA.env.example`. Metrics count `inflight` as reuse hit.
+- **Design B — batch look up:** `lookup_batch(history, calls)` after shared-prefix resolve; O(L+K); full hit returns without re-executing reads. Not implemented.
+- **Design C — atomic batch look up + shared execution:** Classify each cell Hit/Wait/Exec atomically, then state-aware shared execution. Not implemented.
 
 ## Deployment boundaries
 
@@ -17,7 +25,7 @@ Teammate-facing docs: root `README.md` only. Exp A evidence: single `docs/worklo
 - DeepSWE/TMax = **task suites**; Pi/Mini-SWE = **harnesses**; Harbor = orchestrator. Exp A DeepSWE reward 0 = task hardness. **T1/T2** = same **Harbor+Pi**, TMax tasks: T1 5/5; T2 **40/40** on 8 valid (exclude `001033` env-timeout, `009942` agent-timeout). Natural Pi only. Not Exp B TVCache.
 - Handout Tables 1–2 in root `README.md` use explicit matched contract: Harbor+Pi · Qwen3.8-27B · 8 ids in `experiment-tasks-tmax-easy8.txt` · pass@5/n=5 · 256K/100 turns/xhigh/TP4. DeepSWE Table 1 row = A3.
 - Exp B sequential: `tvcache-rust` (`scripts/tvcache_server.sh`) + tool gateway (`scripts/tvcache_tool_gateway.sh`) + `TvcacheLoopbackPi`; env `configs/models/qwen3.8-27b-tmax-easy8-tvcache-seq.env.example`; metrics `tvcache-metrics.jsonl`. Keep TVCache up across NERSC alloc recycles. Table 2 fields (`per_call_hit_rate`, `per_turn_hit_rate` from Pi sessions, `tool_wait_saved_rate`) are computed by `scripts/analyze_tvcache_metrics.py` → `tvcache-summary.json`; sequential waves auto-run this at DONE in `run_harbor_wave.sh`. Handout Exp B cell: prefix `tmax-qwen38-27b-easy8-tvcache-seq-t100-xh` (40/40 · ~9% call / ~8.7% turn · tool-wait −5.2% with outlier note).
-- Exp B Pi↔gateway transport: **TCP** `host.docker.internal:17878` (`SYSML_TVCACHE_GATEWAY_PORT`). Do **not** rely on Mac-host AF_UNIX bind-mounted into agent containers — Docker Desktop shows the sock inode but `connect` is ECONNREFUSED (model bridge works because `model.sock` is created inside a Linux Docker volume). Optional Unix listen on the Mac is host-local only. Start TVCache via `screen` / daemonize (`os.setsid`) — Cursor-shell `nohup` alone gets process-group-reaped and drops `:17878`, which then trips `set -e` + EXIT `scancel`. Final `teardown_serve` must be `|| true` so DONE/analyze still run.
+- Exp B/C Pi↔gateway transport: **TCP** `host.docker.internal:17878` (`SYSML_TVCACHE_GATEWAY_PORT`). Do **not** rely on Mac-host AF_UNIX bind-mounted into agent containers — Docker Desktop shows the sock inode but `connect` is ECONNREFUSED (model bridge works because `model.sock` is created inside a Linux Docker volume). Optional Unix listen on the Mac is host-local only. Start TVCache via `screen` / daemonize (`os.setsid`) — Cursor-shell `nohup` alone gets process-group-reaped and drops `:17878`, which then trips `set -e` + EXIT `scancel`. Final `teardown_serve` must be `|| true` so DONE/analyze still run. macOS daemonize must **`chdir($ROOT)` not `/`** — `tvclient.set_rollout_id` does `makedirs("./rollouts")` and fails with Errno 30 on the sealed system volume (agents then hang until Harbor timeout).
 - Exp B sandbox workdir: default `SYSML_TVCACHE_WORKDIR=/home/user` (TMax). `/app` does not exist in TMax images and makes every `docker exec -w` fail. Serialize tvclient RPCs in the tool gateway (one stream per connection).
 - Wave `manifest.json` `purpose` follows `SYSML_TASK_ROOT` (tmax vs deep-swe). Analyzer `--benchmark` defaults to the string `DeepSWE` — tag only; pass `--benchmark TMax` for T* summaries.
 
@@ -32,12 +40,15 @@ Teammate-facing docs: root `README.md` only. Exp A evidence: single `docs/worklo
 - Reward 0 + `exception_info=null` is graded unsuccessful, not infra success by itself.
 - Inspect Pi session + verifier; do not invent rewards or manufacture parallelism.
 - Preserve `jobs/` / `results/` evidence. Never commit `.local-smoke/` or `.env`.
+- `gpu-monitor.log` (`nvidia-smi` mem/util) is real for TMax-8 / T2 / A3, but **mem ≈ vLLM prealloc** at `SYSML_GPU_MEMORY_UTILIZATION` (flat ~74 GiB/80 GB at 0.90) — not live KV fill. Prefer vLLM `kv_cache_usage_perc` (A3 `monitor-status.log`) or Pi `message.usage.input` for context pressure.
+- TMax-8 matched contract is **TP=4 / 256K** by design; measured Pi peak prompt on easy8 is only **~4–10K** (Exp B p50≈3.9K max≈8.1K; T2-8 p50≈4.9K max≈9.7K). TP=4 was not proven necessary by TMax KV — contrast DeepSWE A3 peaks ~179K / KV~41%.
 
 ## Characterization
 
 - Handout Experiment A uses `variants/deep-swe-setup/` (setup in instruction). Do not edit `vendor/deep-swe/tasks/` in place.
 - Parallel-turn fraction = turns with >1 emitted call / all assistant turns (incl. zero-call).
 - Analyze with `bash scripts/analyze_characterization_wave.sh <prefix>` — do not glob unrelated `jobs/`.
+- T2 traces live under `jobs/tmax-qwen38-27b-easy10-t100-xh-task_*/…/agent/pi/sessions/*.jsonl` (also `trajectory.json`). When asked “what do traces look like / comments”, walk Pi JSONL content blocks: `thinking` (xhigh reasoning), `text` (user-visible narration / Done summary), `toolCall`/`toolResult` (`bash`/`read`/`edit`/`write`) — not only parallel-turn %. Valid 8-task set = `configs/experiment-tasks-tmax-easy8.txt` (40 sessions).
 - TVCache key = trajectory prefix in the TCG. Paper win = cross-rollout reuse (Exp B). Within-turn N>1 is Exp C.
 - Forced-parallel stress (`MultitoolPi` / `SYSML_PARALLEL_STRESS` / `--parallel-test`, PR #1) is **not** Exp A natural rate. Cite `docs/parallel_prompt_stress_report.md` separately. Soft prompt (“parallel when appropriate”) for ≥27B; hard “AS MANY” only for emission stress. Exp C also needs **cache hits on parallel-tool turns**, not just parallel-turn %.
 - When the goal is **solve + parallel stress**, keep proven capability knobs (27B: **4 GPU / TP=4 / 256K / 250 turns / k=5**). Do not cut context/turns just to fit 2 GPUs — allocate more GPUs instead.

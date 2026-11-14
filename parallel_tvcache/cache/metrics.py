@@ -1,4 +1,7 @@
-"""Append-only JSONL metrics for Exp B sequential TVCache."""
+"""Append-only JSONL metrics for Exp B sequential / Exp C Design A TVCache.
+
+``inflight`` (Design A WAIT) counts as a reuse hit for Table 2 rates.
+"""
 
 from __future__ import annotations
 
@@ -56,18 +59,21 @@ def _tool_wait_saved(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "tool_wait_saved_rate": None,
             "typical_miss_s": None,
         }
-    misses = [float(r["elapsed_s"]) for r in timed if r.get("source") != "hit"]
-    clean = [x for x in misses if x < _TYPICAL_MISS_MAX_S]
+    # Reuse events (hit + Design A WAIT) are replaced by typical miss in the
+    # counterfactual; miss/bypass keep measured elapsed.
+    reuse = ("hit", "inflight")
+    miss_like = [float(r["elapsed_s"]) for r in timed if r.get("source") not in reuse]
+    clean = [x for x in miss_like if x < _TYPICAL_MISS_MAX_S]
     if clean:
         typical = float(statistics.median(clean))
-    elif misses:
-        typical = float(statistics.median(misses))
+    elif miss_like:
+        typical = float(statistics.median(miss_like))
     else:
         typical = 0.0
     actual = float(sum(float(r["elapsed_s"]) for r in timed))
     counterfactual = float(
         sum(
-            typical if r.get("source") == "hit" else float(r["elapsed_s"])
+            typical if r.get("source") in reuse else float(r["elapsed_s"])
             for r in timed
         )
     )
@@ -85,11 +91,12 @@ def summarize_turn_hits(job_dirs: Iterable[Path]) -> dict[str, Any]:
     """Per-turn hit rate from Pi session ``details.tvcache.source``.
 
     A turn = one assistant message with ≥1 toolCall, followed by its toolResults.
-    Turn is a hit-turn if any of those results has ``details.tvcache.source == "hit"``.
+    Turn is a hit-turn if any result has ``source`` in ``hit`` / ``inflight``.
     """
     turns_with_tools = 0
     turns_with_hit = 0
     call_hit = call_miss = call_other = 0
+    reuse = ("hit", "inflight")
     for job in job_dirs:
         if not job.is_dir():
             continue
@@ -125,10 +132,10 @@ def summarize_turn_hits(job_dirs: Iterable[Path]) -> dict[str, Any]:
                 while j < len(msgs) and msgs[j].get("role") == "toolResult":
                     det = (msgs[j].get("details") or {}).get("tvcache") or {}
                     src = det.get("source")
-                    if src == "hit":
+                    if src in reuse:
                         call_hit += 1
-                        sources.append("hit")
-                    elif src in ("miss", "inflight", "bypass"):
+                        sources.append(str(src))
+                    elif src in ("miss", "bypass"):
                         call_miss += 1
                         sources.append(str(src))
                     else:
@@ -136,7 +143,7 @@ def summarize_turn_hits(job_dirs: Iterable[Path]) -> dict[str, Any]:
                     j += 1
                 if sources:
                     turns_with_tools += 1
-                    if any(s == "hit" for s in sources):
+                    if any(s in reuse for s in sources):
                         turns_with_hit += 1
                 i = j if j > i + 1 else i + 1
     return {
@@ -167,6 +174,7 @@ def summarize_metrics(
         "calls": 0,
         "hits": 0,
         "misses": 0,
+        "inflights": 0,
         "per_call_hit_rate": None,
         "per_turn_hit_rate": None,
         "tool_turns": 0,
@@ -181,7 +189,7 @@ def summarize_metrics(
         return empty
 
     rows: list[dict[str, Any]] = []
-    hits = misses = 0
+    hits = misses = inflights = 0
     for line in p.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
@@ -190,7 +198,10 @@ def summarize_metrics(
         src = row.get("source")
         if src == "hit":
             hits += 1
-        elif src in ("miss", "inflight", "bypass"):
+        elif src == "inflight":
+            inflights += 1
+            hits += 1  # Design A WAIT = reuse
+        elif src in ("miss", "bypass"):
             misses += 1
     total = hits + misses
     out: dict[str, Any] = {
@@ -198,6 +209,7 @@ def summarize_metrics(
         "calls": total,
         "hits": hits,
         "misses": misses,
+        "inflights": inflights,
         "per_call_hit_rate": (hits / total) if total else None,
     }
     out.update(_tool_wait_saved([r for r in rows if r.get("event") == "tool"]))
