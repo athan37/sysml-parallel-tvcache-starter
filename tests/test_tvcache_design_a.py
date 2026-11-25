@@ -167,6 +167,8 @@ async def test_gateway_design_a_wait_joins_owner(monkeypatch, tmp_path):
             return None
 
     gw = ToolGateway(design="A", sock_path="")
+    # This test is about HIT/WAIT/EXECUTE ordering, not container warmup.
+    gw._warmed.update({"c1", "c2"})
     ex1, ex2 = FakeExecutor(), FakeExecutor()
     # Second rollout should not execute — share first gate so waiter can join.
     ex2.lookup_or_execute = ex1.lookup_or_execute  # type: ignore[method-assign]

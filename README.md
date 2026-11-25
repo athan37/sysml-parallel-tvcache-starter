@@ -255,6 +255,8 @@ CDF = fraction of assistant turns with **at most** *k* model-emitted tool calls 
 
 **Exp C Design A matched TMax-8 (2026-11-13):** prefix `tmax-qwen38-27b-easy8-tvcache-desA-t100-xh` · env `configs/models/qwen3.8-27b-tmax-easy8-tvcache-desA.env.example` · `SYSML_TVCACHE_DESIGN=A` · agent `TvcacheLoopbackPi`. **pass@5 / pass@1 = 8/8**; graded trials **39/40** reward 1.0 (one `AgentTimeoutError` on `task_004783` retry after gateway cwd fix). Metrics (`tvcache-metrics.jsonl` / `tvcache-summary.json`): **252** tool calls · **24** reuse hits (incl. **1** `inflight` WAIT) · **228** misses → **9.5%** per-call · **10.2%** per-turn (21/206 tool-turns) · tool-wait saved **+0.5%**. Poster: `docs/tvcache-midpoint-poster-v42.pptx`. Note: first attempt at `task_004783` failed when macOS gateway daemon `chdir("/")` broke `tvclient` `./rollouts` mkdir — fixed in `tvcache_tool_gateway.sh` (`chdir($ROOT)`); task re-run appended to same wave metrics.
 
+**Container-warmup timing (PR #3+):** the tool gateway pays one best-effort no-op `docker exec` per container **before** the tool-wait clock. It is logged as `event=warmup` and is not counted as a call, hit, or miss. The Table 2 rows above were collected **before** this policy; rerun Exp B and Exp C together before comparing them under the new definition. Warmup failures/timeouts are logged and never block the real tool call.
+
 ### Experiment A — primary completed cell (2026-11-01)
 
 | Item | Value |

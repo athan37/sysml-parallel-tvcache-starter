@@ -107,12 +107,23 @@ class ToolGateway:
         # Design A: cross-rollout WAIT/EXECUTE ownership for readonly keys.
         self._inflight = InflightCoordinator()
         self._mutate_locks: dict[str, asyncio.Lock] = {}
+        # Container warmup: one best-effort no-op exec per container, paid
+        # before the tool-wait clock so cold `docker exec` is not a miss.
+        self._warmed: set[str] = set()
+        self._warm_locks: dict[str, asyncio.Lock] = {}
 
     def _mutate_lock(self, task_id: str) -> asyncio.Lock:
         lock = self._mutate_locks.get(task_id)
         if lock is None:
             lock = asyncio.Lock()
             self._mutate_locks[task_id] = lock
+        return lock
+
+    def _warm_lock(self, container_id: str) -> asyncio.Lock:
+        lock = self._warm_locks.get(container_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._warm_locks[container_id] = lock
         return lock
 
     async def get_session(
@@ -224,6 +235,80 @@ class ToolGateway:
             await self._inflight.fail(key, fut, exc)
             raise
 
+    async def _warm_container(
+        self, container_id: str, task_id: str, rollout_id: str
+    ) -> None:
+        """Pay one no-op exec per container before the tool-wait clock.
+
+        Best-effort: a missing container, missing ``bash``, or Docker timeout
+        must never block the real tool call. The warmup row is logged separately
+        and is not counted as a call, hit, or miss by ``summarize_metrics``.
+        """
+        if not container_id or container_id in self._warmed:
+            return
+        async with self._warm_lock(container_id):
+            if container_id in self._warmed:
+                return
+            workdir = os.environ.get("SYSML_TVCACHE_WORKDIR", "/home/user")
+            try:
+                timeout_s = float(
+                    os.environ.get("SYSML_TVCACHE_WARMUP_TIMEOUT_S", "30")
+                )
+            except ValueError:
+                timeout_s = 30.0
+            t0 = time.perf_counter()
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "docker",
+                    "exec",
+                    "-w",
+                    workdir,
+                    container_id,
+                    "bash",
+                    "-lc",
+                    "echo tvcache-warm",
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                try:
+                    _, err_b = await asyncio.wait_for(
+                        proc.communicate(), timeout=timeout_s
+                    )
+                except asyncio.TimeoutError:
+                    try:
+                        proc.kill()
+                    except ProcessLookupError:
+                        pass
+                    await proc.wait()
+                    LOG.warning(
+                        "container warmup timed out cid=%s after %.1fs",
+                        container_id,
+                        timeout_s,
+                    )
+                    return
+            except Exception as exc:  # noqa: BLE001 — warmup is best-effort
+                LOG.warning("container warmup failed cid=%s: %s", container_id, exc)
+                return
+            elapsed = time.perf_counter() - t0
+            if proc.returncode != 0:
+                LOG.warning(
+                    "container warmup failed cid=%s rc=%s: %s",
+                    container_id,
+                    proc.returncode,
+                    err_b.decode(errors="replace").strip(),
+                )
+                return
+            self._warmed.add(container_id)
+            log_metric(
+                {
+                    "event": "warmup",
+                    "task_id": task_id,
+                    "rollout_id": rollout_id,
+                    "container_id": container_id,
+                    "elapsed_s": elapsed,
+                }
+            )
+
     async def handle_tool(self, req: dict[str, Any]) -> dict[str, Any]:
         task_id = str(req.get("task_id") or "unknown-task")
         rollout_id = str(req.get("rollout_id") or "unknown-rollout")
@@ -236,6 +321,7 @@ class ToolGateway:
         token_c = live_container_var.set(sess.container_id)
         token_t = task_id_var.set(task_id)
         token_r = rollout_id_var.set(rollout_id)
+        await self._warm_container(sess.container_id, task_id, rollout_id)
         t0 = time.perf_counter()
         try:
             if self.design == "A":
